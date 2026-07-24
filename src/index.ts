@@ -5,6 +5,7 @@ import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
 import { Bot, InputFile, webhookCallback } from "grammy";
 import { buildExportZip, buildPreviewHtml, makeWorkDir } from "./archive.js";
+import { publishExportToGitHub } from "./github.js";
 import { parseContent } from "./parser.js";
 import { clearOrder, getOrder, saveOrder } from "./store.js";
 import { renderNewsletter } from "./template.js";
@@ -72,8 +73,10 @@ bot.on("message:document", async (ctx) => {
     if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
     if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
     const previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
+    const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
     await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
-    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
+    const publishMessage = publishStatus === "pushed" ? " Đã push folder lên GitHub." : " GitHub chưa được cấu hình hoặc không có thay đổi mới.";
+    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.${publishMessage}` });
     await clearOrder(ctx.chat.id);
   } catch (error) {
     app.log.error(error);

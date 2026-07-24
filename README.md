@@ -39,3 +39,7 @@ Render Free can sleep after inactivity, so the first Telegram message after a lo
 Only ZIP is accepted. Every nested folder is scanned. Each article folder must start with its order number, such as `1. Architecture`, and contain `1040x584.jpg`. The resulting archive contains `vi/index.html` and `assets/img/bannerN_2x.jpg`.
 
 After processing, the bot also sends a standalone `YYYY-MM-DD-preview.html` file. Its JPEG images are embedded as Base64, so it can be opened locally without uploading the image files first.
+
+## Optional GitHub publishing
+
+To publish automatically, set these Render environment variables: `GITHUB_TOKEN` (a GitHub fine-grained personal access token with **Contents: Read and write** on the newsletter repository), `NEWSLETTER_GITHUB_REPOSITORY` (for example, `Vucuongtuan/newsletter`), and optionally `NEWSLETTER_GITHUB_BRANCH` (defaults to `main`). The bot clones the target repository, replaces only its `YYYY-MM-DD` output folder, then commits and pushes that folder. It never pushes this backend's source code.

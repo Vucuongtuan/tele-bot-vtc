@@ -5,8 +5,11 @@ declare module "unzipper" {
     type: "File" | "Directory";
     stream(): Readable;
   }
+  interface ZipDirectory {
+    files: ZipEntry[];
+  }
   const unzipper: {
-    Open: { file(path: string): Promise<{ files: ZipEntry[] }> };
+    Open: { file(path: string): Promise<ZipDirectory> };
   };
   export default unzipper;
 }
