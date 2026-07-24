@@ -1,4 +1,4 @@
-# Telegram newsletter backend
+# Telegram newsletter generate
 
 Node.js 22 / TypeScript bot that creates a  newsletter from Telegram content and an image ZIP.
 
