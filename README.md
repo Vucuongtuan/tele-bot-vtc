@@ -36,4 +36,4 @@ Render Free can sleep after inactivity, so the first Telegram message after a lo
 
 ## Archive contract
 
-Only ZIP is accepted. Every nested folder is scanned; source JPEG images must be named `1.jpg`, `2.jpg`, etc. The resulting archive contains `vi/index.html` and `assets/img/bannerN_2x.jpg`.
+Only ZIP is accepted. Every nested folder is scanned. Each article folder must start with its order number, such as `1. Architecture`, and contain `1040x584.jpg`. The resulting archive contains `vi/index.html` and `assets/img/bannerN_2x.jpg`.
