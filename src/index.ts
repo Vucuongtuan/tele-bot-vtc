@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
 import { Bot, InputFile, webhookCallback } from "grammy";
-import { buildExportZip, makeWorkDir } from "./archive.js";
+import { buildExportZip, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { parseContent } from "./parser.js";
 import { clearOrder, getOrder, saveOrder } from "./store.js";
 import { renderNewsletter } from "./template.js";
@@ -67,9 +67,12 @@ bot.on("message:document", async (ctx) => {
     const inputPath = join(workDir, "input.zip");
     const outputPath = join(workDir, `${order.folderName}.zip`);
     await pipeline(download.body as never, createWriteStream(inputPath));
-    const count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, parseContent(order.content!)));
+    const articles = parseContent(order.content!);
+    const count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, articles));
     if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
     if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
+    const previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
+    await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
     await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
     await clearOrder(ctx.chat.id);
   } catch (error) {

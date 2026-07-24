@@ -37,3 +37,5 @@ Render Free can sleep after inactivity, so the first Telegram message after a lo
 ## Archive contract
 
 Only ZIP is accepted. Every nested folder is scanned. Each article folder must start with its order number, such as `1. Architecture`, and contain `1040x584.jpg`. The resulting archive contains `vi/index.html` and `assets/img/bannerN_2x.jpg`.
+
+After processing, the bot also sends a standalone `YYYY-MM-DD-preview.html` file. Its JPEG images are embedded as Base64, so it can be opened locally without uploading the image files first.

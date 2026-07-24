@@ -4,6 +4,8 @@ import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import archiver from "archiver";
 import unzipper from "unzipper";
+import type { Article } from "./types.js";
+import { renderNewsletter } from "./template.js";
 
 const imageName = /^1040x584\.jpe?g$/i;
 const numberedFolder = /^(\d+)\./;
@@ -13,9 +15,9 @@ interface ArchiveEntry {
   stream(): Readable;
 }
 
-export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string): Promise<number> {
+async function getImageCandidates(inputPath: string): Promise<Array<{ file: ArchiveEntry; order: number }>> {
   const directory = await unzipper.Open.file(inputPath);
-  const candidates = (directory.files as ArchiveEntry[])
+  return (directory.files as ArchiveEntry[])
     .map((file: ArchiveEntry) => {
       const folder = file.path.split("/").find((part) => numberedFolder.test(part));
       const match = folder?.match(numberedFolder);
@@ -25,6 +27,10 @@ export async function buildExportZip(inputPath: string, outputPath: string, fold
       item.file.type === "File" && imageName.test(basename(item.file.path)) && item.order !== undefined,
     )
     .sort((a, b) => a.order - b.order);
+}
+
+export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string): Promise<number> {
+  const candidates = await getImageCandidates(inputPath);
 
   const archive = archiver("zip", { zlib: { level: 9 } });
   const output = createWriteStream(outputPath);
@@ -36,6 +42,17 @@ export async function buildExportZip(inputPath: string, outputPath: string, fold
   await archive.finalize();
   await finished(output);
   return candidates.length;
+}
+
+export async function buildPreviewHtml(inputPath: string, folderName: string, articles: Article[]): Promise<string> {
+  const candidates = await getImageCandidates(inputPath);
+  const imageSources: string[] = [];
+  for (const { file, order } of candidates) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of file.stream()) chunks.push(Buffer.from(chunk));
+    imageSources[order - 1] = `data:image/jpeg;base64,${Buffer.concat(chunks).toString("base64")}`;
+  }
+  return renderNewsletter(folderName, articles, imageSources);
 }
 
 export async function makeWorkDir(chatId: number): Promise<string> {

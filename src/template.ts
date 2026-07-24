@@ -3,10 +3,10 @@ import type { Article } from "./types.js";
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 
 /** Kept server-side so the generated index.html never depends on Vue state. */
-export function renderNewsletter(folderName: string, articles: Article[]): string {
+export function renderNewsletter(folderName: string, articles: Article[], imageSources?: string[]): string {
   const cards = articles.map((article, index) => `
     <tr><td style="padding:0 35px 24px;background:#f2f7f5;font-family:Georgia,serif">
-      <a href="${escapeHtml(article.url)}"><img src="https://newsletter.wowweekend.vn/${encodeURIComponent(folderName)}/assets/img/banner${index + 1}_2x.jpg" alt="${escapeHtml(article.title)}" width="520" style="display:block;width:100%;max-width:520px;height:auto;border:0"></a>
+      <a href="${escapeHtml(article.url)}"><img src="${imageSources?.[index] ?? `https://newsletter.wowweekend.vn/${encodeURIComponent(folderName)}/assets/img/banner${index + 1}_2x.jpg`}" alt="${escapeHtml(article.title)}" width="520" style="display:block;width:100%;max-width:520px;height:auto;border:0"></a>
       <p style="margin:14px 0 5px;color:#9e7e3b;font-size:13px;text-transform:uppercase">${escapeHtml(article.cate)}</p>
       <h2 style="margin:0 0 9px;font-size:23px;line-height:1.25"><a style="color:#222;text-decoration:none" href="${escapeHtml(article.url)}">${escapeHtml(article.title)}</a></h2>
       <p style="margin:0;color:#444;line-height:1.5">${escapeHtml(article.des)}</p>
