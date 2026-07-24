@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: wowweekend-telegram
+    name: tele-bot-vtc
     runtime: node
     plan: free
     region: singapore
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm build
+    buildCommand: corepack pnpm install --frozen-lockfile && corepack pnpm build
     startCommand: pnpm start
     healthCheckPath: /health
     envVars:
