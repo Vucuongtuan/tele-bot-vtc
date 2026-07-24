@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Dán 3 giá trị của bạn vào đây. Không commit file đã điền thật.
+RENDER_URL="https://tele-bot-vtc.onrender.com"
+TELEGRAM_BOT_TOKEN="PASTE_BOTFATHER_TOKEN_HERE"
+TELEGRAM_WEBHOOK_SECRET="PASTE_RANDOM_WEBHOOK_SECRET_HERE"
+
+curl --fail-with-body \
+  -F "url=${RENDER_URL}/telegram/webhook" \
+  -F "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
+  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook"
