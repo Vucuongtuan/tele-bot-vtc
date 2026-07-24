@@ -16,7 +16,18 @@ const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
 const bot = new Bot(token);
 const app = Fastify({ logger: true });
 
-bot.command("start", (ctx) => ctx.reply("Dùng /new YYYY-MM-DD, dán content, sau đó gửi file ZIP ảnh."));
+try {
+  await bot.api.setMyCommands([
+    { command: "start", description: "Xem hướng dẫn sử dụng bot" },
+    { command: "new", description: "Tạo newsletter mới: /new YYYY-MM-DD" },
+    { command: "clean", description: "Xóa toàn bộ order hiện tại để làm lại" },
+    { command: "cancel", description: "Hủy order hiện tại" },
+  ]);
+} catch (error) {
+  app.log.warn(error, "Could not update Telegram command menu");
+}
+
+bot.command("start", (ctx) => ctx.reply("Dùng /new YYYY-MM-DD, dán content, sau đó gửi file ZIP ảnh. Dùng /clean để xóa order hiện tại và làm lại."));
 bot.command("new", async (ctx) => {
   const folderName = ctx.match.trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(folderName)) return ctx.reply("Cú pháp: /new 2026-07-26");
@@ -24,6 +35,10 @@ bot.command("new", async (ctx) => {
   return ctx.reply("Đã tạo order. Hãy gửi nội dung newsletter.");
 });
 bot.command("cancel", async (ctx) => { await clearOrder(ctx.chat.id); return ctx.reply("Đã hủy order hiện tại."); });
+bot.command("clean", async (ctx) => {
+  await clearOrder(ctx.chat.id);
+  return ctx.reply("Đã xóa order hiện tại. Bạn có thể dùng /new YYYY-MM-DD để làm lại.");
+});
 
 bot.on("message:text", async (ctx) => {
   const order = await getOrder(ctx.chat.id);
