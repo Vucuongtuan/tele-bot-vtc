@@ -73,11 +73,16 @@ bot.on("message:document", async (ctx) => {
     if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
     if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
     const previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
-    const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
     await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
-    const publishMessage = publishStatus === "pushed" ? " Đã push folder lên GitHub." : " GitHub chưa được cấu hình hoặc không có thay đổi mới.";
-    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.${publishMessage}` });
+    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
     await clearOrder(ctx.chat.id);
+    try {
+      const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
+      if (publishStatus === "pushed") await ctx.reply("Đã push folder newsletter lên GitHub.");
+    } catch (error) {
+      app.log.warn(error, "GitHub publish failed after newsletter export");
+      await ctx.reply("Đã tạo ZIP, nhưng chưa push được GitHub.");
+    }
   } catch (error) {
     app.log.error(error);
     await saveOrder({ ...order, status: "waiting_file", updatedAt: new Date() });
