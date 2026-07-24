@@ -15,9 +15,12 @@ export function parseContent(text: string): Article[] {
     const category = categories.find((item) => rawLine.startsWith(item));
     if (category) {
       if (isComplete(current)) result.push(current);
-      current = { cate: category, title: rawLine.slice(category.length).trim() };
+      const title = rawLine.slice(category.length).trim().replace(/^[:\-–—]\s*/, "");
+      current = { cate: category, title: title || undefined };
     } else if (current && !current.url && /^https:\/\//.test(rawLine)) {
       current.url = rawLine;
+    } else if (current && !current.title) {
+      current.title = rawLine;
     } else if (current?.url && !current.des) {
       current.des = rawLine;
     }
