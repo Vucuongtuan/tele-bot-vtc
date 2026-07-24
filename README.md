@@ -42,4 +42,4 @@ After processing, the bot also sends a standalone `YYYY-MM-DD-preview.html` file
 
 ## Optional GitHub publishing
 
-To publish automatically, set these Render environment variables: `GITHUB_TOKEN` (a GitHub fine-grained personal access token with **Contents: Read and write** on the newsletter repository), `NEWSLETTER_GITHUB_REPOSITORY` (for example, `Vucuongtuan/newsletter`), and optionally `NEWSLETTER_GITHUB_BRANCH` (defaults to `main`). The bot clones the target repository, replaces only its `YYYY-MM-DD` output folder, then commits and pushes that folder. It never pushes this backend's source code.
+To publish automatically, set these Render environment variables: `GITHUB_TOKEN` (a GitHub fine-grained personal access token with **Contents: Read and write** on the newsletter repository), `NEWSLETTER_GITHUB_REPOSITORY` (for example, `Vucuongtuan/newsletter`), and optionally `NEWSLETTER_GITHUB_BRANCH` (defaults to `main`). The bot clones the target repository, replaces only its `public/YYYY-MM-DD` output folder, then commits and pushes that folder. It never pushes this backend's source code.

@@ -8,6 +8,7 @@ import unzipper from "unzipper";
 const executeFile = promisify(execFile);
 const repositoryName = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const branchName = /^[A-Za-z0-9._/-]+$/;
+const basePath = "public";
 
 async function git(args: string[], cwd: string): Promise<void> {
   await executeFile("git", args, { cwd, maxBuffer: 1024 * 1024 });
@@ -25,7 +26,7 @@ async function extractExport(zipPath: string, destination: string): Promise<void
   }
 }
 
-/** Publishes only the generated YYYY-MM-DD folder, never this backend's source code. */
+/** Publishes only public/YYYY-MM-DD, never this backend's source code. */
 export async function publishExportToGitHub(zipPath: string, folderName: string, workDir: string): Promise<"pushed" | "skipped"> {
   const token = process.env.GITHUB_TOKEN;
   const repository = process.env.NEWSLETTER_GITHUB_REPOSITORY;
@@ -39,16 +40,17 @@ export async function publishExportToGitHub(zipPath: string, folderName: string,
     await git(["clone", "--depth", "1", "--branch", branch, remote, checkout], workDir);
     await git(["pull", "--ff-only", "origin", branch], checkout);
 
-    const destination = join(checkout, folderName);
+    const publishedFolder = join(basePath, folderName);
+    const destination = join(checkout, publishedFolder);
     await fs.rm(destination, { recursive: true, force: true });
     await fs.mkdir(destination, { recursive: true });
     await extractExport(zipPath, destination);
 
     await git(["config", "user.name", "WOWWEEKEND Newsletter Bot"], checkout);
     await git(["config", "user.email", "newsletter-bot@users.noreply.github.com"], checkout);
-    await git(["add", "--", folderName], checkout);
+    await git(["add", "--", publishedFolder], checkout);
     try {
-      await git(["diff", "--cached", "--quiet", "--", folderName], checkout);
+      await git(["diff", "--cached", "--quiet", "--", publishedFolder], checkout);
       return "skipped";
     } catch {
       await git(["commit", "-m", `Publish newsletter ${folderName}`], checkout);
