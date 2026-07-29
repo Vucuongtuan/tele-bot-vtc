@@ -1,4 +1,4 @@
-export type OrderStatus = "waiting_content" | "waiting_file" | "processing" | "done";
+export type OrderStatus = "waiting_date" | "waiting_content" | "waiting_file" | "processing" | "done";
 
 export interface Article {
   cate: string;

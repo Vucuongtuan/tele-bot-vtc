@@ -3,7 +3,7 @@ import { createWriteStream, promises as fs } from "node:fs";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
-import { Bot, InputFile, webhookCallback } from "grammy";
+import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
 import { buildExportZip, buildJewelryPreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
 import { parseContent } from "./parser.js";
@@ -21,7 +21,7 @@ const app = Fastify({ logger: true });
 try {
   await bot.api.setMyCommands([
     { command: "start", description: "Xem hướng dẫn sử dụng bot" },
-    { command: "new", description: "Tạo newsletter mới: /new YYYY-MM-DD" },
+  { command: "new", description: "Tạo newsletter mới" },
     { command: "clean", description: "Xóa toàn bộ order hiện tại để làm lại" },
     { command: "cancel", description: "Hủy order hiện tại" },
   ]);
@@ -29,15 +29,47 @@ try {
   app.log.warn(error, "Could not update Telegram command menu");
 }
 
-bot.command("start", (ctx) => ctx.reply("WWK: /new YYYY-MM-DD. Jewelry template 1: /new jewelry-1 YYYY-MM-DD. Sau đó dán content và gửi file ZIP ảnh."));
+const sendContentPrompt = (ctx: { reply: (text: string) => Promise<unknown> }, template: "wwk" | "jewelry-1") => {
+  if (template === "jewelry-1") return ctx.reply(`Đã chọn Jewelry template 1. Dán content theo mẫu dưới đây; bot sẽ tự đặt ảnh folder 1 là hero, ảnh 2–3 là cụm ảnh đôi:\n\n${jewelryTemplate1Form}`);
+  return ctx.reply("Đã chọn WWK. Hãy dán content newsletter, sau đó gửi ZIP ảnh.");
+};
+
+const createOrder = async (ctx: { chat: { id: number }; reply: (text: string) => Promise<unknown> }, template: "wwk" | "jewelry-1", folderName: string) => {
+  await saveOrder({ chatId: ctx.chat.id, folderName, template, status: "waiting_content", updatedAt: new Date() });
+  return sendContentPrompt(ctx, template);
+};
+
+const todayFolderName = () => new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
+}).format(new Date());
+
+bot.command("start", (ctx) => ctx.reply("Bấm /new để chọn loại newsletter, sau đó bot sẽ hướng dẫn từng bước."));
 bot.command("new", async (ctx) => {
   const parts = ctx.match.trim().split(/\s+/);
+  if (!ctx.match.trim()) {
+    const keyboard = new InlineKeyboard()
+      .text("WWK", "new:wwk")
+      .text("Jewelry · Template 1", "new:jewelry-1");
+    return ctx.reply("Bạn muốn tạo newsletter nào?", { reply_markup: keyboard });
+  }
   const template = parts[0] === "jewelry-1" ? "jewelry-1" : "wwk";
   const folderName = template === "jewelry-1" ? parts[1] : parts[0];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(folderName)) return ctx.reply("Cú pháp: /new 2026-07-26");
-  await saveOrder({ chatId: ctx.chat.id, folderName, template, status: "waiting_content", updatedAt: new Date() });
-  if (template === "jewelry-1") return ctx.reply(`Đã tạo Jewelry template 1. Copy mẫu này, điền nội dung rồi gửi lại:\n\n${jewelryTemplate1Form}`);
-  return ctx.reply("Đã tạo order WWK. Hãy gửi nội dung newsletter.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(folderName)) return ctx.reply("Cú pháp nhanh: /new 2026-07-26 hoặc bấm /new để chọn bằng nút.");
+  return createOrder(ctx, template, folderName);
+});
+bot.callbackQuery(/^new:(wwk|jewelry-1)$/, async (ctx) => {
+  const template = ctx.match[1] as "wwk" | "jewelry-1";
+  await saveOrder({ chatId: ctx.chat!.id, folderName: "", template, status: "waiting_date", updatedAt: new Date() });
+  const today = todayFolderName();
+  const keyboard = new InlineKeyboard().text(`Dùng ngày hôm nay · ${today}`, `newdate:${template}:${today}`);
+  await ctx.answerCallbackQuery();
+  return ctx.reply(`Đã chọn ${template === "jewelry-1" ? "Jewelry · Template 1" : "WWK"}. Bấm dùng ngày hôm nay hoặc gửi ngày theo dạng YYYY-MM-DD.`, { reply_markup: keyboard });
+});
+bot.callbackQuery(/^newdate:(wwk|jewelry-1):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
+  const template = ctx.match[1] as "wwk" | "jewelry-1";
+  const folderName = ctx.match[2];
+  await ctx.answerCallbackQuery();
+  return createOrder(ctx as never, template, folderName);
 });
 bot.command("cancel", async (ctx) => { await clearOrder(ctx.chat.id); return ctx.reply("Đã hủy order hiện tại."); });
 bot.command("clean", async (ctx) => {
@@ -47,7 +79,13 @@ bot.command("clean", async (ctx) => {
 
 bot.on("message:text", async (ctx) => {
   const order = await getOrder(ctx.chat.id);
-  if (!order || order.status !== "waiting_content") return;
+  if (!order) return;
+  if (order.status === "waiting_date") {
+    const folderName = ctx.message.text.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(folderName)) return ctx.reply("Ngày chưa đúng. Hãy gửi theo dạng YYYY-MM-DD, ví dụ 2026-08-01.");
+    return createOrder(ctx, order.template ?? "wwk", folderName);
+  }
+  if (order.status !== "waiting_content") return;
   if (order.template === "jewelry-1") {
     const parsed = parseJewelryTemplate1(ctx.message.text);
     if ("error" in parsed) return ctx.reply(`Chưa đọc được Jewelry template 1: ${parsed.error}`);
