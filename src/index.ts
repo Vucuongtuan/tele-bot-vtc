@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
 import { Bot, InputFile, webhookCallback } from "grammy";
-import { buildExportZip, buildPreviewHtml, makeWorkDir } from "./archive.js";
+import { buildExportZip, buildJewelryPreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
 import { parseContent } from "./parser.js";
+import { jewelryTemplate1Form, parseJewelryTemplate1, renderJewelryTemplate1 } from "./jewelry.js";
 import { clearOrder, getOrder, saveOrder } from "./store.js";
 import { renderNewsletter } from "./template.js";
 import type { Order } from "./types.js";
@@ -28,12 +29,15 @@ try {
   app.log.warn(error, "Could not update Telegram command menu");
 }
 
-bot.command("start", (ctx) => ctx.reply("Dùng /new YYYY-MM-DD, dán content, sau đó gửi file ZIP ảnh. Dùng /clean để xóa order hiện tại và làm lại."));
+bot.command("start", (ctx) => ctx.reply("WWK: /new YYYY-MM-DD. Jewelry template 1: /new jewelry-1 YYYY-MM-DD. Sau đó dán content và gửi file ZIP ảnh."));
 bot.command("new", async (ctx) => {
-  const folderName = ctx.match.trim();
+  const parts = ctx.match.trim().split(/\s+/);
+  const template = parts[0] === "jewelry-1" ? "jewelry-1" : "wwk";
+  const folderName = template === "jewelry-1" ? parts[1] : parts[0];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(folderName)) return ctx.reply("Cú pháp: /new 2026-07-26");
-  await saveOrder({ chatId: ctx.chat.id, folderName, status: "waiting_content", updatedAt: new Date() });
-  return ctx.reply("Đã tạo order. Hãy gửi nội dung newsletter.");
+  await saveOrder({ chatId: ctx.chat.id, folderName, template, status: "waiting_content", updatedAt: new Date() });
+  if (template === "jewelry-1") return ctx.reply(`Đã tạo Jewelry template 1. Copy mẫu này, điền nội dung rồi gửi lại:\n\n${jewelryTemplate1Form}`);
+  return ctx.reply("Đã tạo order WWK. Hãy gửi nội dung newsletter.");
 });
 bot.command("cancel", async (ctx) => { await clearOrder(ctx.chat.id); return ctx.reply("Đã hủy order hiện tại."); });
 bot.command("clean", async (ctx) => {
@@ -44,6 +48,13 @@ bot.command("clean", async (ctx) => {
 bot.on("message:text", async (ctx) => {
   const order = await getOrder(ctx.chat.id);
   if (!order || order.status !== "waiting_content") return;
+  if (order.template === "jewelry-1") {
+    const parsed = parseJewelryTemplate1(ctx.message.text);
+    if ("error" in parsed) return ctx.reply(`Chưa đọc được Jewelry template 1: ${parsed.error}`);
+    const pairs = parsed.value.blocks.filter((block) => block.type === "imagePair").length;
+    await saveOrder({ ...order, content: ctx.message.text, status: "waiting_file", updatedAt: new Date() });
+    return ctx.reply(`Đã nhận Jewelry template 1: hero ảnh ${parsed.value.heroImage}, ${pairs} cụm ảnh đôi, ${parsed.value.credits.length} credit. Gửi ZIP ảnh (tối đa 20 MB) nhé.`);
+  }
   const articles = parseContent(ctx.message.text);
   if (!articles.length) return ctx.reply("Không đọc được block hợp lệ. Mỗi block cần category, title, URL và mô tả.");
   await saveOrder({ ...order, content: ctx.message.text, status: "waiting_file", updatedAt: new Date() });
@@ -68,11 +79,21 @@ bot.on("message:document", async (ctx) => {
     const inputPath = join(workDir, "input.zip");
     const outputPath = join(workDir, `${order.folderName}.zip`);
     await pipeline(download.body as never, createWriteStream(inputPath));
-    const articles = parseContent(order.content!);
-    const count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, articles));
+    const isJewelry = order.template === "jewelry-1";
+    const jewelry = isJewelry ? parseJewelryTemplate1(order.content!) : undefined;
+    if (jewelry && "error" in jewelry) throw new Error(jewelry.error);
+    const articles = isJewelry ? [] : parseContent(order.content!);
+    const html = isJewelry
+      ? renderJewelryTemplate1(order.folderName, jewelry!.value)
+      : renderNewsletter(order.folderName, articles);
+    const count = await buildExportZip(inputPath, outputPath, order.folderName, html, isJewelry
+      ? { indexPath: "index.html", imageName: (number) => `banner_${number}.jpg` }
+      : undefined);
     if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
     if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
-    const previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
+    const previewHtml = isJewelry
+      ? await buildJewelryPreviewHtml(inputPath, order.folderName, jewelry!.value)
+      : await buildPreviewHtml(inputPath, order.folderName, articles);
     await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
     await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
     await clearOrder(ctx.chat.id);

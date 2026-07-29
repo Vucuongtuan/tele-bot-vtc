@@ -6,6 +6,8 @@ import archiver from "archiver";
 import unzipper from "unzipper";
 import type { Article } from "./types.js";
 import { renderNewsletter } from "./template.js";
+import { renderJewelryTemplate1 } from "./jewelry.js";
+import type { JewelryTemplate1Content } from "./types.js";
 
 const imageName = /^1040x584\.jpe?g$/i;
 const numberedFolder = /^(\d+)\./;
@@ -29,15 +31,20 @@ async function getImageCandidates(inputPath: string): Promise<Array<{ file: Arch
     .sort((a, b) => a.order - b.order);
 }
 
-export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string): Promise<number> {
+export interface ExportOptions {
+  indexPath?: string;
+  imageName?: (order: number) => string;
+}
+
+export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string, options: ExportOptions = {}): Promise<number> {
   const candidates = await getImageCandidates(inputPath);
 
   const archive = archiver("zip", { zlib: { level: 9 } });
   const output = createWriteStream(outputPath);
   archive.pipe(output);
-  archive.append(html, { name: "vi/index.html" });
+  archive.append(html, { name: options.indexPath ?? "vi/index.html" });
   for (const { file, order } of candidates) {
-    archive.append(file.stream(), { name: `assets/img/banner${order}_2x.jpg` });
+    archive.append(file.stream(), { name: `assets/img/${options.imageName?.(order) ?? `banner${order}_2x.jpg`}` });
   }
   await archive.finalize();
   await finished(output);
@@ -45,14 +52,23 @@ export async function buildExportZip(inputPath: string, outputPath: string, fold
 }
 
 export async function buildPreviewHtml(inputPath: string, folderName: string, articles: Article[]): Promise<string> {
+  return renderNewsletter(folderName, articles, await getImageSources(inputPath, (order) => `data:image/jpeg;base64,${order}`));
+}
+
+async function getImageSources(inputPath: string, makeSource: (data: string) => string): Promise<string[]> {
   const candidates = await getImageCandidates(inputPath);
   const imageSources: string[] = [];
   for (const { file, order } of candidates) {
     const chunks: Buffer[] = [];
     for await (const chunk of file.stream()) chunks.push(Buffer.from(chunk));
-    imageSources[order - 1] = `data:image/jpeg;base64,${Buffer.concat(chunks).toString("base64")}`;
+    imageSources[order - 1] = makeSource(Buffer.concat(chunks).toString("base64"));
   }
-  return renderNewsletter(folderName, articles, imageSources);
+  return imageSources;
+}
+
+export async function buildJewelryPreviewHtml(inputPath: string, folderName: string, content: JewelryTemplate1Content): Promise<string> {
+  const imageSources = await getImageSources(inputPath, (data) => `data:image/jpeg;base64,${data}`);
+  return renderJewelryTemplate1(folderName, content, imageSources);
 }
 
 export async function makeWorkDir(chatId: number): Promise<string> {
