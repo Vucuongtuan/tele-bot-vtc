@@ -18,7 +18,7 @@ const validUrl = (value: string) => {
 export type JewelryParseResult = { value: JewelryTemplate1Content } | { error: string };
 
 /** Parses the copy-and-fill form sent as one Telegram message. */
-export function parseJewelryTemplate1(text: string): JewelryParseResult {
+function parseJewelryTemplate1Form(text: string): JewelryParseResult {
   const category = requiredField(text, "CATEGORY");
   const title = requiredField(text, "TITLE");
   const url = requiredField(text, "LINK");
@@ -59,19 +59,54 @@ export function parseJewelryTemplate1(text: string): JewelryParseResult {
   return { value: { category, title, url, heroImage, blocks, credits } };
 }
 
-export const jewelryTemplate1Form = `CATEGORY: TOPIC
-TITLE: Tiêu đề bài viết
-LINK: https://jewelry.wowweekend.vn/...
-HERO: 1
+/** Parses the editor's usual paste format, with no labels required. */
+function parseJewelryTemplate1Raw(text: string): JewelryParseResult {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const firstContentIndex = lines.findIndex((line) => line.trim());
+  if (firstContentIndex < 0) return { error: "Nội dung trống." };
+  const category = lines[firstContentIndex].trim();
+  const title = lines.slice(firstContentIndex + 1).find((line) => line.trim())?.trim();
+  const urlIndex = lines.findIndex((line, index) => index > firstContentIndex && /^https:\/\//.test(line.trim()));
+  const url = urlIndex < 0 ? undefined : lines[urlIndex].trim();
+  if (!title || !url || !validUrl(url)) return { error: "Cần 3 phần đầu: category, tiêu đề và một URL https của bài viết." };
 
-BODY:
+  const creditsIndex = lines.findIndex((line, index) => index > urlIndex && /^credits\s*$/i.test(line.trim()));
+  const bodyText = lines.slice(urlIndex + 1, creditsIndex < 0 ? undefined : creditsIndex).join("\n").trim();
+  const paragraphs = bodyText.split(/\n\s*\n/).map((part) => part.trim().replace(/\n+/g, " ")).filter(Boolean);
+  if (!paragraphs.length) return { error: "Không tìm thấy phần nội dung sau link." };
+
+  const credits: JewelryCredit[] = [];
+  for (const line of (creditsIndex < 0 ? [] : lines.slice(creditsIndex + 1)).map((item) => item.trim()).filter(Boolean)) {
+    const linked = line.match(/^(.*?)\s*\|\s*(https:\/\/\S+)$/);
+    const trailingUrl = line.match(/^(.*?)\s+(https:\/\/\S+)$/);
+    const creditText = (linked?.[1] ?? trailingUrl?.[1] ?? line).trim();
+    const creditUrl = linked?.[2] ?? trailingUrl?.[2];
+    credits.push({ text: creditText, url: creditUrl && validUrl(creditUrl) ? creditUrl : undefined });
+  }
+
+  // The established template 1 layout places its two-column image grid after the intro.
+  const intro = paragraphs.slice(0, 2);
+  const remainder = paragraphs.slice(2);
+  const blocks: JewelryBlock[] = [{ type: "text", paragraphs: intro }, { type: "imagePair", images: [2, 3] }];
+  if (remainder.length) blocks.push({ type: "text", paragraphs: remainder });
+  return { value: { category, title, url, heroImage: 1, blocks, credits } };
+}
+
+export function parseJewelryTemplate1(text: string): JewelryParseResult {
+  return /^CATEGORY:/im.test(text) ? parseJewelryTemplate1Form(text) : parseJewelryTemplate1Raw(text);
+}
+
+export const jewelryTemplate1Form = `TOPIC
+Tiêu đề bài viết
+https://jewelry.wowweekend.vn/...
+
 Đoạn nội dung đầu tiên.
 
-[[IMAGES: 2, 3]]
+Đoạn nội dung thứ hai.
 
-Đoạn nội dung sau hai ảnh.
+Đoạn nội dung sau cụm ảnh.
 
-CREDITS:
+Credits
 Head of Editorial: Veera
 Cover photo: Pandora | https://pandora.net`;
 
