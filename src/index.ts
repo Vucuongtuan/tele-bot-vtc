@@ -361,21 +361,19 @@ app.post("/telegram/webhook", async (request, reply) => {
   return webhookCallback(bot, "fastify")(request, reply);
 });
 
-const gmailOrderChatId = Number(process.env.TELEGRAM_ORDER_CHAT_ID);
 bot.command("checkwwk", async (ctx) => {
-  if (!Number.isInteger(gmailOrderChatId) || gmailOrderChatId <= 0) return ctx.reply("Gmail order chưa được cấu hình: thiếu TELEGRAM_ORDER_CHAT_ID.");
-  if (ctx.chat.id !== gmailOrderChatId) return ctx.reply("Chat này không được phép kiểm tra Gmail order.");
+  const chatId = ctx.chat.id;
   await ctx.reply("Đang kiểm tra Gmail order WWK…");
   try {
     const processed = await checkGmailOrders(async ({ messageId, threadId, text, subject, from, rfcMessageId }) => {
     if (await wasEmailProcessed(messageId)) return false;
     const folderName = folderNameFromEmailSubject(subject);
     if (!folderName) {
-      await bot.api.sendMessage(gmailOrderChatId, `Mail WWK có subject không chứa ngày dạng d/m/yyyy: ${subject}`);
+      await bot.api.sendMessage(chatId, `Mail WWK có subject không chứa ngày dạng d/m/yyyy: ${subject}`);
       await markEmailProcessed(messageId);
       return false;
     }
-    const accepted = await preparePayloadOrder(gmailOrderChatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });
+    const accepted = await preparePayloadOrder(chatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });
     if (accepted) await markEmailProcessed(messageId);
     return accepted;
     });

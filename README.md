@@ -47,7 +47,7 @@ PAYLOAD_API_KEY=your-payload-user-api-key
 
 ### Optional: automatically start WWK orders from Gmail
 
-Use `/checkwwk` in the configured Telegram chat to check Gmail on demand. It reads emails from one trusted sender whose subject contains `[WWK]`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
+Use `/checkwwk` in Telegram to check Gmail on demand. It reads emails from one trusted sender whose subject contains `[WWK]`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
 
 Each check reads only the single newest matching email; it never backfills historical orders.
 
@@ -61,10 +61,9 @@ GMAIL_ORDER_SENDER=orders@example.com,editor@example.com
 GMAIL_OAUTH_CLIENT_ID=google-oauth-client-id
 GMAIL_OAUTH_CLIENT_SECRET=google-oauth-client-secret
 GMAIL_OAUTH_REFRESH_TOKEN=google-oauth-refresh-token
-TELEGRAM_ORDER_CHAT_ID=123456789
 ```
 
-Only successfully parsed and previewed messages are recorded as processed in Firestore. The configured Telegram chat must have started the bot at least once.
+Only successfully parsed and previewed messages are recorded as processed in Firestore. The order is sent to the Telegram chat that invokes `/checkwwk`; keep the bot private if its Gmail integration should not be usable by other people.
 
 Generate the webhook secret with:
 
