@@ -25,11 +25,15 @@ async function featuredImageUrl(article: Article): Promise<string> {
   const endpoint = new URL("posts", `${payloadUrl.replace(/\/$/, "")}/`);
   endpoint.searchParams.set("where[slug][equals]", slug);
   endpoint.searchParams.set("limit", "1");
+  endpoint.searchParams.set("depth", "1");
+  endpoint.searchParams.set("select[title]", "true");
+  endpoint.searchParams.set("select[slug]", "true");
+  endpoint.searchParams.set("select[featureImage]", "true");
   const response = await fetch(endpoint, { headers: { Authorization: `users API-Key ${apiKey}` } });
   if (!response.ok) throw new Error(`Payload không tìm được bài viết “${slug}” (${response.status})`);
-  const body = await response.json() as { docs?: Array<{ featuredImage?: unknown }> };
-  const imageUrl = findImageUrl(body.docs?.[0]?.featuredImage);
-  if (!imageUrl) throw new Error(`Bài viết “${slug}” không có featuredImage.origin hợp lệ`);
+  const body = await response.json() as { docs?: Array<{ featureImage?: unknown }> };
+  const imageUrl = findImageUrl(body.docs?.[0]?.featureImage);
+  if (!imageUrl) throw new Error(`Bài viết “${slug}” không có featureImage.origin hợp lệ`);
   return imageUrl;
 }
 
