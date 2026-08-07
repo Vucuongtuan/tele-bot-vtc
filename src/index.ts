@@ -44,6 +44,23 @@ const todayFolderName = () => new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
 }).format(new Date());
 
+const vietnamWeekdayNames = ["Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
+
+/** Returns today through the coming Sunday, all in Vietnam's calendar. */
+const folderDateOptions = () => {
+  const today = todayFolderName();
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short" }).format(new Date());
+  const dayIndex = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
+  const count = dayIndex === 0 ? 1 : 7 - dayIndex;
+  const start = new Date(`${today}T00:00:00Z`);
+  return Array.from({ length: count }, (_, offset) => {
+    const date = new Date(start);
+    date.setUTCDate(start.getUTCDate() + offset);
+    const value = date.toISOString().slice(0, 10);
+    return { value, label: `${vietnamWeekdayNames[(dayIndex + offset) % 7]} · ${value.slice(-2)}` };
+  });
+};
+
 const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_markup: InlineKeyboard }) => Promise<unknown> }, order: Order) => {
   const articles = parseContent(order.content!);
   const source = order.imageSource === "payload" ? "Payload (featured image)" : "ZIP ảnh";
@@ -112,10 +129,14 @@ bot.command("new", async (ctx) => {
 bot.callbackQuery(/^new:(wwk|jewelry-1)$/, async (ctx) => {
   const template = ctx.match[1] as "wwk" | "jewelry-1";
   await saveOrder({ chatId: ctx.chat!.id, folderName: "", template, status: "waiting_date", updatedAt: new Date() });
-  const today = todayFolderName();
-  const keyboard = new InlineKeyboard().text(`Dùng ngày hôm nay · ${today}`, `newdate:${template}:${today}`);
+  const dates = folderDateOptions();
+  const keyboard = new InlineKeyboard();
+  dates.forEach((date, index) => {
+    keyboard.text(date.label, `newdate:${template}:${date.value}`);
+    if (index % 2 === 1 && index < dates.length - 1) keyboard.row();
+  });
   await ctx.answerCallbackQuery();
-  return ctx.reply(`Đã chọn ${template === "jewelry-1" ? "Jewelry · Template 1" : "WWK"}. Bấm dùng ngày hôm nay hoặc gửi ngày theo dạng YYYY-MM-DD.`, { reply_markup: keyboard });
+  return ctx.reply(`Đã chọn ${template === "jewelry-1" ? "Jewelry · Template 1" : "WWK"}. Chọn ngày tạo folder trong tuần này, hoặc gửi ngày theo dạng YYYY-MM-DD.`, { reply_markup: keyboard });
 });
 bot.callbackQuery(/^newdate:(wwk|jewelry-1):(\d{4}-\d{2}-\d{2})$/, async (ctx) => {
   const template = ctx.match[1] as "wwk" | "jewelry-1";
@@ -165,10 +186,23 @@ bot.callbackQuery("images:zip", async (ctx) => {
 bot.callbackQuery("images:payload", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
   if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
-  const prepared = { ...order, imageSource: "payload" as const, status: "waiting_confirmation" as const, updatedAt: new Date() };
-  await saveOrder(prepared);
   await ctx.answerCallbackQuery();
-  return sendWwkConfirmation(ctx, prepared);
+  await ctx.reply("Đang lấy ảnh preview từ Payload…");
+  try {
+    const articles = parseContent(order.content!);
+    const images = await fetchPayloadImages(articles);
+    for (const [index, image] of images.entries()) {
+      await ctx.replyWithPhoto(new InputFile(image, `preview-${index + 1}.jpg`), {
+        caption: `${index + 1}. ${articles[index].title}`,
+      });
+    }
+    const prepared = { ...order, imageSource: "payload" as const, status: "waiting_confirmation" as const, updatedAt: new Date() };
+    await saveOrder(prepared);
+    return sendWwkConfirmation(ctx, prepared);
+  } catch (error) {
+    app.log.error(error, "Payload preview failed");
+    return ctx.reply("Không thể lấy preview từ Payload. Kiểm tra URL/featured image hoặc chọn gửi ZIP ảnh.");
+  }
 });
 
 bot.callbackQuery("export:edit", async (ctx) => {
