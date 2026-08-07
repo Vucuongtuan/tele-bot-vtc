@@ -51,7 +51,7 @@ const folderDateOptions = () => {
   const today = todayFolderName();
   const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short" }).format(new Date());
   const dayIndex = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(weekday);
-  const count = dayIndex === 0 ? 1 : 7 - dayIndex;
+  const count = dayIndex === 0 ? 1 : 8 - dayIndex;
   const start = new Date(`${today}T00:00:00Z`);
   return Array.from({ length: count }, (_, offset) => {
     const date = new Date(start);
