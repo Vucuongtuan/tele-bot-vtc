@@ -5,7 +5,7 @@ const payloadUrl = process.env.PAYLOAD_API_URL ?? "https://wowweekend.vn/api";
 
 function slugFromArticleUrl(articleUrl: string): string {
   const segments = new URL(articleUrl).pathname.split("/").filter(Boolean);
-  const slug = segments.at(-1);
+  const slug = segments.at(-1)?.replace(/\.html$/i, "");
   if (!slug) throw new Error(`Không tìm thấy slug trong URL: ${articleUrl}`);
   return slug;
 }
