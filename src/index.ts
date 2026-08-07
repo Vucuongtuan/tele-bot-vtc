@@ -72,14 +72,14 @@ const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_marku
   return ctx.reply(`Kiểm tra trước khi export\n\nNgày: ${order.folderName}\nNguồn ảnh: ${source}\nSố bài: ${articles.length}\n\n${list}`, { reply_markup: keyboard });
 };
 
-async function preparePayloadOrder(chatId: number, content: string): Promise<boolean> {
+async function preparePayloadOrder(chatId: number, content: string, folderName = todayFolderName()): Promise<boolean> {
   const articles = parseContent(content);
   if (!articles.length) return false;
   if (await getOrder(chatId)) {
     await bot.api.sendMessage(chatId, "Có WWK email mới nhưng bot đang có một order chưa hoàn tất. Hãy export hoặc /cancel order hiện tại trước.");
     return false;
   }
-  const order: Order = { chatId, folderName: todayFolderName(), template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date() };
+  const order: Order = { chatId, folderName, template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date() };
   await saveOrder(order);
   try {
     const images = await fetchPayloadImages(articles);
@@ -96,6 +96,15 @@ async function preparePayloadOrder(chatId: number, content: string): Promise<boo
     await bot.api.sendMessage(chatId, "Không thể tạo preview Payload cho WWK email mới.");
     return false;
   }
+}
+
+function folderNameFromEmailSubject(subject: string): string | undefined {
+  const match = subject.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (!match) return undefined;
+  const [, day, month, year] = match;
+  const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  if (date.getUTCFullYear() !== Number(year) || date.getUTCMonth() !== Number(month) - 1 || date.getUTCDate() !== Number(day)) return undefined;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
 async function exportWwk(ctx: any, order: Order): Promise<void> {
@@ -333,9 +342,15 @@ bot.command("checkwwk", async (ctx) => {
   if (ctx.chat.id !== gmailOrderChatId) return ctx.reply("Chat này không được phép kiểm tra Gmail order.");
   await ctx.reply("Đang kiểm tra Gmail order WWK…");
   try {
-    const processed = await checkGmailOrders(async (messageId, text) => {
+    const processed = await checkGmailOrders(async ({ messageId, text, subject }) => {
     if (await wasEmailProcessed(messageId)) return false;
-    const accepted = await preparePayloadOrder(gmailOrderChatId, text);
+    const folderName = folderNameFromEmailSubject(subject);
+    if (!folderName) {
+      await bot.api.sendMessage(gmailOrderChatId, `Mail WWK có subject không chứa ngày dạng d/m/yyyy: ${subject}`);
+      await markEmailProcessed(messageId);
+      return false;
+    }
+    const accepted = await preparePayloadOrder(gmailOrderChatId, text, folderName);
     if (accepted) await markEmailProcessed(messageId);
     return accepted;
     });

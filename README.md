@@ -49,6 +49,8 @@ PAYLOAD_API_KEY=your-payload-user-api-key
 
 Use `/checkwwk` in the configured Telegram chat to check Gmail on demand. It reads emails from one trusted sender whose subject contains `[WWK]`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
 
+The email subject must also include its newsletter date in Vietnamese numeric format, for example `[WWK] 9/8/2026`. The export folder will be `2026-08-09`.
+
 Create a Google OAuth client and a refresh token authorized with the `https://www.googleapis.com/auth/gmail.readonly` scope, then set these secrets:
 
 ```dotenv

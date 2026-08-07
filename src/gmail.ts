@@ -2,6 +2,7 @@ interface GmailMessagePart {
   mimeType?: string;
   body?: { data?: string };
   parts?: GmailMessagePart[];
+  headers?: Array<{ name?: string; value?: string }>;
 }
 
 interface GmailMessage {
@@ -45,7 +46,7 @@ function findPlainText(part?: GmailMessagePart): string | undefined {
 }
 
 /** Reads matching Gmail orders once; invoke this from a user action, not a background timer. */
-export async function checkGmailOrders(onOrder: (messageId: string, text: string) => Promise<boolean>): Promise<number> {
+export async function checkGmailOrders(onOrder: (order: { messageId: string; text: string; subject: string }) => Promise<boolean>): Promise<number> {
   if (!configured()) throw new Error("Gmail order integration is not configured");
   const token = await accessToken();
   const headers = { Authorization: `Bearer ${token}` };
@@ -61,7 +62,8 @@ export async function checkGmailOrders(onOrder: (messageId: string, text: string
     if (!response.ok) throw new Error(`Gmail message read failed (${response.status})`);
     const message = await response.json() as GmailMessage;
     const text = findPlainText(message.payload);
-    if (text && await onOrder(message.id, text)) processed += 1;
+    const subject = message.payload?.headers?.find((header) => header.name?.toLowerCase() === "subject")?.value ?? "";
+    if (text && await onOrder({ messageId: message.id, text, subject })) processed += 1;
   }
   return processed;
 }
