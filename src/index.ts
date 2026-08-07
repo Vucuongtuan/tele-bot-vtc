@@ -155,7 +155,7 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
   }
 }
 
-bot.command("start", (ctx) => ctx.reply("Bấm /new để chọn loại newsletter, sau đó bot sẽ hướng dẫn từng bước."));
+bot.command("start", (ctx) => ctx.reply("Bấm /new để chọn loại newsletter, hoặc kiểm tra order WWK từ Gmail.", { reply_markup: new InlineKeyboard().text("Kiểm tra mail WWK", "gmail:check") }));
 bot.command("new", async (ctx) => {
   const parts = ctx.match.trim().split(/\s+/);
   if (!ctx.match.trim()) {
@@ -361,9 +361,7 @@ app.post("/telegram/webhook", async (request, reply) => {
   return webhookCallback(bot, "fastify")(request, reply);
 });
 
-bot.command("checkwwk", async (ctx) => {
-  const chatId = ctx.chat.id;
-  await ctx.reply("Đang kiểm tra Gmail order WWK…");
+async function checkWwkOrders(chatId: number): Promise<string> {
   try {
     const processed = await checkGmailOrders(async ({ messageId, threadId, text, subject, from, rfcMessageId }) => {
     if (await wasEmailProcessed(messageId)) return false;
@@ -377,11 +375,22 @@ bot.command("checkwwk", async (ctx) => {
     if (accepted) await markEmailProcessed(messageId);
     return accepted;
     });
-    return ctx.reply(processed ? `Đã tạo ${processed} order WWK từ Gmail.` : "Không có mail WWK mới cần xử lý.");
+    return processed ? `Đã tạo ${processed} order WWK từ Gmail.` : "Không có mail WWK mới cần xử lý.";
   } catch (error) {
     app.log.error(error, "Manual Gmail order check failed");
-    return ctx.reply("Không thể kiểm tra Gmail. Kiểm tra cấu hình OAuth/Gmail rồi thử lại.");
+    return "Không thể kiểm tra Gmail. Kiểm tra cấu hình OAuth/Gmail rồi thử lại.";
   }
+}
+
+bot.command("checkwwk", async (ctx) => {
+  await ctx.reply("Đang kiểm tra Gmail order WWK…");
+  return ctx.reply(await checkWwkOrders(ctx.chat.id));
+});
+
+bot.callbackQuery("gmail:check", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Đang kiểm tra Gmail order WWK…");
+  return ctx.reply(await checkWwkOrders(ctx.chat!.id));
 });
 
 const port = Number(process.env.PORT ?? 8080);
