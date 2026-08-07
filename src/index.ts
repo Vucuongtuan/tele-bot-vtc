@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
 import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
-import { buildExportZip, buildJewelryPreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
+import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
 import { parseContent } from "./parser.js";
 import { jewelryTemplate1Form, parseJewelryTemplate1, renderJewelryTemplate1 } from "./jewelry.js";
 import { clearOrder, getOrder, saveOrder } from "./store.js";
 import { renderNewsletter } from "./template.js";
+import { fetchPayloadImages } from "./payload.js";
 import type { Order } from "./types.js";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -42,6 +43,57 @@ const createOrder = async (ctx: { chat: { id: number }; reply: (text: string) =>
 const todayFolderName = () => new Intl.DateTimeFormat("en-CA", {
   timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit",
 }).format(new Date());
+
+const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_markup: InlineKeyboard }) => Promise<unknown> }, order: Order) => {
+  const articles = parseContent(order.content!);
+  const source = order.imageSource === "payload" ? "Payload (featured image)" : "ZIP ảnh";
+  const list = articles.map((article, index) => `${index + 1}. ${article.title}`).join("\n");
+  const keyboard = new InlineKeyboard().text("Tạo preview & export", "export:confirm").text("Sửa content", "export:edit");
+  return ctx.reply(`Kiểm tra trước khi export\n\nNgày: ${order.folderName}\nNguồn ảnh: ${source}\nSố bài: ${articles.length}\n\n${list}`, { reply_markup: keyboard });
+};
+
+async function exportWwk(ctx: any, order: Order): Promise<void> {
+  const workDir = await makeWorkDir(order.chatId);
+  try {
+    const articles = parseContent(order.content!);
+    const outputPath = join(workDir, `${order.folderName}.zip`);
+    let count: number;
+    let previewHtml: string;
+    if (order.imageSource === "payload") {
+      const images = await fetchPayloadImages(articles);
+      count = await buildExportZipFromImages(outputPath, renderNewsletter(order.folderName, articles), images);
+      previewHtml = renderNewsletter(order.folderName, articles, images.map((image) => `data:image/jpeg;base64,${image.toString("base64")}`));
+    } else {
+      if (!order.archiveFileId) throw new Error("ZIP archive is missing");
+      const file = await ctx.api.getFile(order.archiveFileId);
+      if (!file.file_path) throw new Error("Telegram did not return a file path");
+      const download = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
+      if (!download.ok || !download.body) throw new Error("Could not download archive from Telegram");
+      const inputPath = join(workDir, "input.zip");
+      await pipeline(download.body as never, createWriteStream(inputPath));
+      count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, articles));
+      if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
+      previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
+    }
+    if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
+    await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
+    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
+    await clearOrder(order.chatId);
+    try {
+      const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
+      if (publishStatus === "pushed") await ctx.reply("Đã push folder newsletter lên GitHub.");
+    } catch (error) {
+      app.log.warn(error, "GitHub publish failed after newsletter export");
+      await ctx.reply("Đã tạo ZIP, nhưng chưa push được GitHub.");
+    }
+  } catch (error) {
+    app.log.error(error);
+    await saveOrder({ ...order, status: "waiting_confirmation", updatedAt: new Date() });
+    await ctx.reply("Không thể export. Kiểm tra URL/ảnh, hoặc bấm Sửa content để thử lại.");
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true });
+  }
+}
 
 bot.command("start", (ctx) => ctx.reply("Bấm /new để chọn loại newsletter, sau đó bot sẽ hướng dẫn từng bước."));
 bot.command("new", async (ctx) => {
@@ -95,8 +147,45 @@ bot.on("message:text", async (ctx) => {
   }
   const articles = parseContent(ctx.message.text);
   if (!articles.length) return ctx.reply("Không đọc được block hợp lệ. Mỗi block cần category, title, URL và mô tả.");
-  await saveOrder({ ...order, content: ctx.message.text, status: "waiting_file", updatedAt: new Date() });
-  return ctx.reply(`Đã nhận ${articles.length} bài. Gửi ZIP ảnh (tối đa 20 MB) nhé.`);
+  await saveOrder({ ...order, content: ctx.message.text, status: "waiting_image_source", updatedAt: new Date() });
+  const keyboard = new InlineKeyboard()
+    .text("Gửi ZIP ảnh", "images:zip")
+    .text("Lấy ảnh từ Payload", "images:payload");
+  return ctx.reply(`Đã nhận ${articles.length} bài. Chọn nguồn ảnh:`, { reply_markup: keyboard });
+});
+
+bot.callbackQuery("images:zip", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
+  await saveOrder({ ...order, status: "waiting_file", updatedAt: new Date() });
+  await ctx.answerCallbackQuery();
+  return ctx.reply("Gửi ZIP ảnh (tối đa 20 MB) nhé.");
+});
+
+bot.callbackQuery("images:payload", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
+  const prepared = { ...order, imageSource: "payload" as const, status: "waiting_confirmation" as const, updatedAt: new Date() };
+  await saveOrder(prepared);
+  await ctx.answerCallbackQuery();
+  return sendWwkConfirmation(ctx, prepared);
+});
+
+bot.callbackQuery("export:edit", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.template === "jewelry-1" || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  await saveOrder({ ...order, status: "waiting_content", updatedAt: new Date() });
+  await ctx.answerCallbackQuery();
+  return ctx.reply("Hãy gửi lại toàn bộ content WWK. Bạn sẽ chọn lại nguồn ảnh sau đó.");
+});
+
+bot.callbackQuery("export:confirm", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.template === "jewelry-1" || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Đang tạo preview và ZIP…");
+  return exportWwk(ctx, order);
 });
 
 bot.on("message:document", async (ctx) => {
@@ -105,6 +194,12 @@ bot.on("message:document", async (ctx) => {
   if (!order || order.status !== "waiting_file") return ctx.reply("Hãy bắt đầu bằng /new, rồi gửi content trước.");
   if (!document.file_name?.toLowerCase().endsWith(".zip")) return ctx.reply("Backend hiện chỉ nhận ZIP.");
   if (document.file_size && document.file_size > 20 * 1024 * 1024) return ctx.reply("Telegram Bot API chỉ cho bot tải file tối đa 20 MB. Hãy dùng link upload riêng cho archive này.");
+
+  if (order.template !== "jewelry-1") {
+    const prepared = { ...order, archiveFileId: document.file_id, imageSource: "zip" as const, status: "waiting_confirmation" as const, updatedAt: new Date() };
+    await saveOrder(prepared);
+    return sendWwkConfirmation(ctx, prepared);
+  }
 
   await saveOrder({ ...order, archiveFileId: document.file_id, status: "processing", updatedAt: new Date() });
   await ctx.reply("Đang xử lý ZIP…");

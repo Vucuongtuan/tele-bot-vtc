@@ -5,7 +5,7 @@ Node.js 22 / TypeScript bot that creates a  newsletter from Telegram content and
 ## What the bot does
 
 1. Use `/new YYYY-MM-DD` to start an order.
-2. Send the newsletter content, then a ZIP of article folders.
+2. For WWK, send newsletter content then choose either a ZIP of article folders or automatic featured-image retrieval from Payload. Jewelry uses ZIP images.
 3. The bot sends a standalone Base64 `YYYY-MM-DD-preview.html` and the final ZIP.
 4. If GitHub publishing is configured, it also publishes only `public/YYYY-MM-DD/` in the target repository.
 
@@ -40,6 +40,9 @@ TELEGRAM_BOT_TOKEN=token-from-botfather
 TELEGRAM_WEBHOOK_SECRET=a-long-random-secret
 FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
 PORT=8080
+# Optional for WWK's “Lấy ảnh từ Payload” option
+PAYLOAD_API_URL=https://wowweekend.vn/api
+PAYLOAD_API_KEY=your-payload-user-api-key
 ```
 
 Generate the webhook secret with:

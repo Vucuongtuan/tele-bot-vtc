@@ -38,17 +38,24 @@ export interface ExportOptions {
 
 export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string, options: ExportOptions = {}): Promise<number> {
   const candidates = await getImageCandidates(inputPath);
+  return writeExportZip(outputPath, html, candidates.map(({ file, order }) => ({ order, source: file.stream() })), options);
+}
 
+export async function buildExportZipFromImages(outputPath: string, html: string, images: Buffer[], options: ExportOptions = {}): Promise<number> {
+  return writeExportZip(outputPath, html, images.map((source, index) => ({ order: index + 1, source })), options);
+}
+
+async function writeExportZip(outputPath: string, html: string, images: Array<{ order: number; source: Readable | Buffer }>, options: ExportOptions): Promise<number> {
   const archive = archiver("zip", { zlib: { level: 9 } });
   const output = createWriteStream(outputPath);
   archive.pipe(output);
   archive.append(html, { name: options.indexPath ?? "vi/index.html" });
-  for (const { file, order } of candidates) {
-    archive.append(file.stream(), { name: `assets/img/${options.imageName?.(order) ?? `banner${order}_2x.jpg`}` });
+  for (const { source, order } of images) {
+    archive.append(source, { name: `assets/img/${options.imageName?.(order) ?? `banner${order}_2x.jpg`}` });
   }
   await archive.finalize();
   await finished(output);
-  return candidates.length;
+  return images.length;
 }
 
 export async function buildPreviewHtml(inputPath: string, folderName: string, articles: Article[]): Promise<string> {

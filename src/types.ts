@@ -1,4 +1,4 @@
-export type OrderStatus = "waiting_date" | "waiting_content" | "waiting_file" | "processing" | "done";
+export type OrderStatus = "waiting_date" | "waiting_content" | "waiting_image_source" | "waiting_file" | "waiting_confirmation" | "processing" | "done";
 
 export interface Article {
   cate: string;
@@ -33,6 +33,7 @@ export interface Order {
   template?: NewsletterTemplate;
   content?: string;
   archiveFileId?: string;
+  imageSource?: "zip" | "payload";
   status: OrderStatus;
   updatedAt: Date;
 }
