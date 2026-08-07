@@ -6,8 +6,8 @@ import archiver from "archiver";
 import unzipper from "unzipper";
 import type { Article } from "./types.js";
 import { renderNewsletter } from "./template.js";
-import { renderJewelryTemplate1 } from "./jewelry.js";
-import type { JewelryTemplate1Content } from "./types.js";
+import { renderJewelryTemplate1, renderJewelryTemplate2 } from "./jewelry.js";
+import type { JewelryTemplate1Content, JewelryTemplate2Content } from "./types.js";
 
 const imageName = /^1040x584\.jpe?g$/i;
 const numberedFolder = /^(\d+)\./;
@@ -76,6 +76,11 @@ async function getImageSources(inputPath: string, makeSource: (data: string) => 
 export async function buildJewelryPreviewHtml(inputPath: string, folderName: string, content: JewelryTemplate1Content): Promise<string> {
   const imageSources = await getImageSources(inputPath, (data) => `data:image/jpeg;base64,${data}`);
   return renderJewelryTemplate1(folderName, content, imageSources);
+}
+
+export async function buildJewelryTemplate2PreviewHtml(inputPath: string, folderName: string, content: JewelryTemplate2Content): Promise<string> {
+  const imageSources = await getImageSources(inputPath, (data) => `data:image/jpeg;base64,${data}`);
+  return renderJewelryTemplate2(folderName, content, imageSources);
 }
 
 export async function makeWorkDir(chatId: number): Promise<string> {

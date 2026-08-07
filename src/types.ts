@@ -7,7 +7,7 @@ export interface Article {
   des: string;
 }
 
-export type NewsletterTemplate = "wwk" | "jewelry-1";
+export type NewsletterTemplate = "wwk" | "jewelry-1" | "jewelry-2";
 
 export type JewelryBlock =
   | { type: "text"; paragraphs: string[] }
@@ -25,6 +25,28 @@ export interface JewelryTemplate1Content {
   heroImage: number;
   blocks: JewelryBlock[];
   credits: JewelryCredit[];
+}
+
+export interface JewelryArticle {
+  category: string;
+  title: string;
+  url: string;
+  description: string;
+}
+
+export interface JewelryPick {
+  label: string;
+  title: string;
+  url: string;
+}
+
+export interface JewelryTemplate2Content {
+  editorNote: string;
+  editorSignature: string;
+  featured: JewelryArticle;
+  articles: [JewelryArticle, JewelryArticle];
+  yourPickDescription?: string;
+  picks: [JewelryPick, JewelryPick];
 }
 
 export interface Order {

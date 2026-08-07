@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { JewelryBlock, JewelryCredit, JewelryTemplate1Content } from "./types.js";
+import type { JewelryArticle, JewelryBlock, JewelryCredit, JewelryPick, JewelryTemplate1Content, JewelryTemplate2Content } from "./types.js";
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!);
 
@@ -112,6 +112,54 @@ Credits
 Head of Editorial: Veera
 Cover photo: Pandora | https://pandora.net`;
 
+export type JewelryTemplate2ParseResult = { value: JewelryTemplate2Content } | { error: string };
+
+const cleanMarkdown = (value: string) => value.replace(/\*{1,3}/g, "").trim();
+const markdownUrl = (value: string) => value.match(/\]\((https:\/\/[^\s)]+)\)|\b(https:\/\/\S+)/)?.[1]
+  ?? value.match(/\]\((https:\/\/[^\s)]+)\)|\b(https:\/\/\S+)/)?.[2];
+
+function parseTemplate2Article(lines: string[]): JewelryArticle | undefined {
+  const values = lines.map(cleanMarkdown).filter(Boolean);
+  const urlIndex = values.findIndex((line) => markdownUrl(line));
+  const url = urlIndex < 0 ? undefined : markdownUrl(values[urlIndex]);
+  if (values.length < 3 || !url || !validUrl(url)) return undefined;
+  return { category: values[0], title: values[1], url, description: values.slice(urlIndex + 1).join(" ") };
+}
+
+function parseTemplate2Pick(line: string): JewelryPick | undefined {
+  const match = cleanMarkdown(line).match(/^(This|That):\s*(.+)$/i);
+  if (!match) return undefined;
+  const url = markdownUrl(match[2]);
+  if (!url || !validUrl(url)) return undefined;
+  const title = cleanMarkdown(match[2].replace(/\[([^\]]*)\]\(https:\/\/[^\s)]+\)/g, "$1").replace(/https:\/\/\S+/g, ""));
+  return title ? { label: match[1].toLowerCase(), title, url } : undefined;
+}
+
+/** Parses the editorial paste used by Jewelry template 2, including optional Your Pick copy. */
+export function parseJewelryTemplate2(text: string): JewelryTemplate2ParseResult {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const markerIndexes = lines.map((line, index) => ({ line: cleanMarkdown(line), index }))
+    .filter(({ line }) => /^(FEATURED SPOTLIGHT|TOPIC|YOUR PICK)$/i.test(line));
+  const featuredIndex = markerIndexes.find(({ line }) => /^FEATURED SPOTLIGHT$/i.test(line))?.index;
+  const topicIndexes = markerIndexes.filter(({ line }) => /^TOPIC$/i.test(line)).map(({ index }) => index);
+  const picksIndex = markerIndexes.find(({ line }) => /^YOUR PICK$/i.test(line))?.index;
+  if (featuredIndex === undefined || topicIndexes.length !== 2 || picksIndex === undefined) return { error: "Cần 1 FEATURED SPOTLIGHT, 2 TOPIC và 1 YOUR PICK." };
+  const beforeFeatured = lines.slice(0, featuredIndex).map(cleanMarkdown).filter(Boolean);
+  if (beforeFeatured.length < 2) return { error: "Thiếu Editor’s Note hoặc chữ ký editor ở đầu nội dung." };
+  const featured = parseTemplate2Article(lines.slice(featuredIndex, topicIndexes[0]));
+  const first = parseTemplate2Article(lines.slice(topicIndexes[0], topicIndexes[1]));
+  const second = parseTemplate2Article(lines.slice(topicIndexes[1], picksIndex));
+  if (!featured || !first || !second) return { error: "Mỗi bài cần category, tiêu đề, URL https và mô tả." };
+  const pickLines = lines.slice(picksIndex + 1).map(cleanMarkdown).filter(Boolean);
+  const thisIndex = pickLines.findIndex((line) => /^This:/i.test(line));
+  const thatIndex = pickLines.findIndex((line) => /^That:/i.test(line));
+  if (thisIndex < 0 || thatIndex < 0) return { error: "YOUR PICK cần đủ hai dòng This: và That: có link https." };
+  const thisPick = parseTemplate2Pick(pickLines[thisIndex]);
+  const thatPick = parseTemplate2Pick(pickLines[thatIndex]);
+  if (!thisPick || !thatPick) return { error: "This và That cần tiêu đề cùng URL https hợp lệ." };
+  return { value: { editorNote: beforeFeatured.slice(0, -1).join(" "), editorSignature: beforeFeatured.at(-1)!, featured, articles: [first, second], yourPickDescription: pickLines.slice(0, thisIndex).join(" ") || undefined, picks: [thisPick, thatPick] } };
+}
+
 function imageUrl(folderName: string, image: number, images?: string[]): string {
   return images?.[image - 1] ?? `https://newsletter.wowweekend.vn/jewelry/${encodeURIComponent(folderName)}/assets/img/banner_${image}.jpg`;
 }
@@ -138,5 +186,18 @@ export function renderJewelryTemplate1(folderName: string, content: JewelryTempl
   const source = readFileSync(sourcePath, "utf8");
   const rendered = source.replace(/<!-- Hero Image -->[\s\S]*?(?=\s*<!-- Footer Social Icons -->)/, dynamicContent);
   if (rendered === source) throw new Error("Jewelry template 1 is missing its dynamic content markers.");
+  return rendered;
+}
+
+const template2Article = (article: JewelryArticle, image: number, full = false) => `<tr><td class="article-card-cell" align="center" style="padding:${full ? "0" : "10px 90px 0"};background-color:#000000;"><img class="hero-image" src="${escapeHtml(imageUrl("FOLDER", image))}" width="${full ? 600 : 420}" style="width:100%;max-width:${full ? 600 : 420}px;display:block;border:0;outline:none;height:auto;" alt="" /></td></tr><tr><td class="article-card-cell" align="center" style="padding:20px 90px 4px;background-color:#000000;"><p style="margin:0;font-family:Georgia,serif;font-size:12px;color:#A37E2C;letter-spacing:1px;text-transform:uppercase;">${escapeHtml(article.category)}</p><h2 style="margin:4px 0 0;font-family:Georgia,serif;font-size:24px;line-height:28px;font-weight:500;color:#fff;text-align:center;">${escapeHtml(article.title)}</h2><p style="margin:4px auto 0;width:70%;max-width:280px;font-family:Georgia,serif;font-size:13px;line-height:18px;color:#fff;text-align:center;">${escapeHtml(article.description)}</p></td></tr><tr><td align="center" style="padding:12px 90px 30px;background-color:#000000;"><table role="presentation"><tr><td style="padding:12px 32px;border:1px solid #fff;"><a href="${escapeHtml(article.url)}" style="font-family:Georgia,serif;font-size:11px;font-weight:bold;color:#fff;text-decoration:none;letter-spacing:2px;">READ MORE</a></td></tr></table></td></tr>`;
+
+export function renderJewelryTemplate2(folderName: string, content: JewelryTemplate2Content, imageSources?: string[]): string {
+  const img = (order: number) => escapeHtml(imageSources?.[order - 1] ?? imageUrl(folderName, order));
+  const articleHtml = (article: JewelryArticle, order: number, full = false) => template2Article(article, order, full).replaceAll(escapeHtml(imageUrl("FOLDER", order)), img(order));
+  const pick = (value: JewelryPick, order: number) => `<td class="column" width="220" valign="top" align="center" style="width:220px;padding:0 10px 15px;"><h3 style="margin:0 0 6px;font-family:Georgia,serif;font-size:14px;line-height:20px;font-weight:normal;color:#111;text-transform:uppercase;text-align:left;height:40px;overflow:hidden;">${escapeHtml(value.title)}</h3><div style="margin-bottom:20px;"><img src="${img(order)}" width="200" style="width:100%;max-width:200px;display:block;margin:0 auto;border:0;" alt="" /></div><table role="presentation" style="width:100%;"><tr><td align="center" style="background:#000;padding:12px 10px;border-radius:25px;"><a href="${escapeHtml(value.url)}" style="font-family:Georgia,serif;font-size:18px;color:#fff;text-decoration:none;">${escapeHtml(value.label)}</a></td></tr></table></td>`;
+  const dynamic = `<!-- Editor's Note --><tr><td align="center" style="padding:30px 90px 60px;background:#000;"><p style="margin:0;font-family:Georgia,serif;font-size:14px;line-height:18px;color:#fff;text-align:center;font-style:italic;">${escapeHtml(content.editorNote)}</p><p style="margin:15px 0 0;font-family:Georgia,serif;font-size:13px;font-weight:600;color:#fff;text-align:center;font-style:italic;">${escapeHtml(content.editorSignature)}</p></td></tr>${articleHtml(content.featured, 1, true)}${articleHtml(content.articles[0], 2)}${articleHtml(content.articles[1], 3)}<tr><td align="center" style="padding:30px 30px 5px;background:#fff;"><h2 style="margin:0;font-family:Georgia,serif;font-size:42px;font-weight:300;color:#111;text-transform:uppercase;text-align:center;">YOUR PICK</h2>${content.yourPickDescription ? `<p style="margin:4px auto 0;max-width:280px;font-family:Georgia,serif;font-size:13px;line-height:18px;color:#111;text-align:center;">${escapeHtml(content.yourPickDescription)}</p>` : ""}</td></tr><tr><td align="center" style="padding:20px 30px 40px;background:#fff;"><table role="presentation" style="width:100%;max-width:540px;"><tr>${pick(content.picks[0], 4)}<td width="100" align="center" style="font-family:Georgia,serif;font-size:24px;font-style:italic;">(or)</td>${pick(content.picks[1], 5)}</tr></table></td></tr>`;
+  const source = readFileSync(join(process.cwd(), "UI_template", "jewelry", "template2", "2026-07-30", "index.html"), "utf8");
+  const rendered = source.replace(/<!-- Editor's Note -->[\s\S]*?(?=\s*<!-- Divider -->)/, dynamic);
+  if (rendered === source) throw new Error("Jewelry template 2 is missing its dynamic content markers.");
   return rendered;
 }
