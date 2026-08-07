@@ -55,7 +55,7 @@ export async function checkGmailOrders(onOrder: (order: { messageId: string; thr
   const senderQuery = senders.length === 1 ? `from:${senders[0]}` : `{${senders.map((sender) => `from:${sender}`).join(" ")}}`;
   // Gmail returns newest messages first. Deliberately inspect only one so a
   // manual check can never backfill and create exports from historical orders.
-  const query = new URLSearchParams({ q: `${senderQuery} subject:WWK`, maxResults: "1" });
+  const query = new URLSearchParams({ q: `${senderQuery} subject:WWK subject:"E-News"`, maxResults: "1" });
   const list = await fetch(`${gmailApi}/messages?${query}`, { headers });
   if (!list.ok) throw new Error(`Gmail message list failed (${list.status})`);
   const body = await list.json() as { messages?: Array<{ id: string }> };
