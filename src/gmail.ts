@@ -15,6 +15,10 @@ function configured() {
   return Boolean(process.env.GMAIL_ORDER_SENDER && process.env.GMAIL_OAUTH_CLIENT_ID && process.env.GMAIL_OAUTH_CLIENT_SECRET && process.env.GMAIL_OAUTH_REFRESH_TOKEN);
 }
 
+function trustedSenders(): string[] {
+  return (process.env.GMAIL_ORDER_SENDER ?? "").split(",").map((sender) => sender.trim()).filter(Boolean);
+}
+
 async function accessToken(): Promise<string> {
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -45,8 +49,9 @@ export async function checkGmailOrders(onOrder: (messageId: string, text: string
   if (!configured()) throw new Error("Gmail order integration is not configured");
   const token = await accessToken();
   const headers = { Authorization: `Bearer ${token}` };
-  const sender = process.env.GMAIL_ORDER_SENDER!;
-  const query = new URLSearchParams({ q: `from:${sender} subject:"[WWK]"`, maxResults: "10" });
+  const senders = trustedSenders();
+  const senderQuery = senders.length === 1 ? `from:${senders[0]}` : `{${senders.map((sender) => `from:${sender}`).join(" ")}}`;
+  const query = new URLSearchParams({ q: `${senderQuery} subject:"[WWK]"`, maxResults: "10" });
   const list = await fetch(`${gmailApi}/messages?${query}`, { headers });
   if (!list.ok) throw new Error(`Gmail message list failed (${list.status})`);
   const body = await list.json() as { messages?: Array<{ id: string }> };

@@ -52,7 +52,8 @@ Use `/checkwwk` in the configured Telegram chat to check Gmail on demand. It rea
 Create a Google OAuth client and a refresh token authorized with the `https://www.googleapis.com/auth/gmail.readonly` scope, then set these secrets:
 
 ```dotenv
-GMAIL_ORDER_SENDER=orders@example.com
+# One or more trusted senders, separated by commas
+GMAIL_ORDER_SENDER=orders@example.com,editor@example.com
 GMAIL_OAUTH_CLIENT_ID=google-oauth-client-id
 GMAIL_OAUTH_CLIENT_SECRET=google-oauth-client-secret
 GMAIL_OAUTH_REFRESH_TOKEN=google-oauth-refresh-token
