@@ -6,9 +6,10 @@ import Fastify from "fastify";
 import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
 import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildJewelryTemplate2PreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
+import { startGmailOrderPolling } from "./gmail.js";
 import { parseContent } from "./parser.js";
 import { jewelryTemplate1Form, parseJewelryTemplate1, parseJewelryTemplate2, renderJewelryTemplate1, renderJewelryTemplate2 } from "./jewelry.js";
-import { clearOrder, getOrder, saveOrder } from "./store.js";
+import { clearOrder, getOrder, markEmailProcessed, saveOrder, wasEmailProcessed } from "./store.js";
 import { renderNewsletter } from "./template.js";
 import { fetchPayloadImages } from "./payload.js";
 import type { Order } from "./types.js";
@@ -47,7 +48,7 @@ const todayFolderName = () => new Intl.DateTimeFormat("en-CA", {
 
 const vietnamWeekdayNames = ["Chủ nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
 
-/** Returns today through the coming Sunday, all in Vietnam's calendar. */
+// Return today through the coming Sunday
 const folderDateOptions = () => {
   const today = todayFolderName();
   const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short" }).format(new Date());
@@ -69,6 +70,32 @@ const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_marku
   const keyboard = new InlineKeyboard().text("Tạo preview & export", "export:confirm").text("Sửa content", "export:edit");
   return ctx.reply(`Kiểm tra trước khi export\n\nNgày: ${order.folderName}\nNguồn ảnh: ${source}\nSố bài: ${articles.length}\n\n${list}`, { reply_markup: keyboard });
 };
+
+async function preparePayloadOrder(chatId: number, content: string): Promise<boolean> {
+  const articles = parseContent(content);
+  if (!articles.length) return false;
+  if (await getOrder(chatId)) {
+    await bot.api.sendMessage(chatId, "Có WWK email mới nhưng bot đang có một order chưa hoàn tất. Hãy export hoặc /cancel order hiện tại trước.");
+    return false;
+  }
+  const order: Order = { chatId, folderName: todayFolderName(), template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date() };
+  await saveOrder(order);
+  try {
+    const images = await fetchPayloadImages(articles);
+    for (const [index, image] of images.entries()) {
+      await bot.api.sendPhoto(chatId, new InputFile(image, `preview-${index + 1}.jpg`), { caption: `${index + 1}. ${articles[index].title}` });
+    }
+    const prepared = { ...order, status: "waiting_confirmation" as const, updatedAt: new Date() };
+    await saveOrder(prepared);
+    await sendWwkConfirmation({ reply: (text, options) => bot.api.sendMessage(chatId, text, options) }, prepared);
+    return true;
+  } catch (error) {
+    app.log.error(error, "Payload preview failed for Gmail order");
+    await clearOrder(chatId);
+    await bot.api.sendMessage(chatId, "Không thể tạo preview Payload cho WWK email mới.");
+    return false;
+  }
+}
 
 async function exportWwk(ctx: any, order: Order): Promise<void> {
   const workDir = await makeWorkDir(order.chatId);
@@ -298,6 +325,18 @@ app.post("/telegram/webhook", async (request, reply) => {
   }
   return webhookCallback(bot, "fastify")(request, reply);
 });
+
+const gmailOrderChatId = Number(process.env.TELEGRAM_ORDER_CHAT_ID);
+if (Number.isInteger(gmailOrderChatId) && gmailOrderChatId > 0) {
+  startGmailOrderPolling(async (messageId, text) => {
+    if (await wasEmailProcessed(messageId)) return false;
+    const accepted = await preparePayloadOrder(gmailOrderChatId, text);
+    if (accepted) await markEmailProcessed(messageId);
+    return accepted;
+  }, app.log);
+} else if (process.env.GMAIL_ORDER_SENDER) {
+  app.log.warn("GMAIL_ORDER_SENDER is set but TELEGRAM_ORDER_CHAT_ID is missing or invalid; Gmail order polling is disabled");
+}
 
 const port = Number(process.env.PORT ?? 8080);
 await app.listen({ port, host: "0.0.0.0" });

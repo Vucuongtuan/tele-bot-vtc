@@ -31,6 +31,7 @@ function createFirestore(): Firestore {
 
 const db = createFirestore();
 const orders = db.collection("telegramOrders");
+const processedEmails = db.collection("processedOrderEmails");
 
 export async function saveOrder(order: Order): Promise<void> {
   await orders.doc(String(order.chatId)).set({ ...order, updatedAt: new Date() });
@@ -43,4 +44,12 @@ export async function getOrder(chatId: number): Promise<Order | undefined> {
 
 export async function clearOrder(chatId: number): Promise<void> {
   await orders.doc(String(chatId)).delete();
+}
+
+export async function wasEmailProcessed(messageId: string): Promise<boolean> {
+  return (await processedEmails.doc(messageId).get()).exists;
+}
+
+export async function markEmailProcessed(messageId: string): Promise<void> {
+  await processedEmails.doc(messageId).set({ processedAt: new Date() });
 }
