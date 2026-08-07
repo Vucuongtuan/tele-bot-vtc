@@ -187,6 +187,9 @@ bot.callbackQuery("images:payload", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
   if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
   await ctx.answerCallbackQuery();
+  // Lock the order before fetching. Callback queries can be delivered twice when
+  // the button is tapped again while the Payload requests are still in flight.
+  await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
   await ctx.reply("Đang lấy ảnh preview từ Payload…");
   try {
     const articles = parseContent(order.content!);
@@ -201,6 +204,7 @@ bot.callbackQuery("images:payload", async (ctx) => {
     return sendWwkConfirmation(ctx, prepared);
   } catch (error) {
     app.log.error(error, "Payload preview failed");
+    await saveOrder({ ...order, status: "waiting_image_source", updatedAt: new Date() });
     return ctx.reply("Không thể lấy preview từ Payload. Kiểm tra URL/featured image hoặc chọn gửi ZIP ảnh.");
   }
 });
