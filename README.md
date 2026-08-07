@@ -53,7 +53,7 @@ Each check reads only the single newest matching email; it never backfills histo
 
 The email subject must also include its newsletter date in Vietnamese numeric format, for example `[WWK] 9/8/2026`. The export folder will be `2026-08-09`.
 
-Create a Google OAuth client and a refresh token authorized with the `https://www.googleapis.com/auth/gmail.readonly` scope, then set these secrets:
+Create a Google OAuth client and a refresh token authorized with both `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.send` scopes, then set these secrets. The send scope is used only after you press the Telegram button to reply to the original order email.
 
 ```dotenv
 # One or more trusted senders, separated by commas

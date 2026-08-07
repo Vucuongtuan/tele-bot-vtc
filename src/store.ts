@@ -1,5 +1,5 @@
 import { Firestore } from "@google-cloud/firestore";
-import type { Order } from "./types.js";
+import type { GmailReplyDraft, Order } from "./types.js";
 
 interface FirebaseServiceAccount {
   project_id: string;
@@ -32,6 +32,7 @@ function createFirestore(): Firestore {
 const db = createFirestore();
 const orders = db.collection("telegramOrders");
 const processedEmails = db.collection("processedOrderEmails");
+const gmailReplyDrafts = db.collection("gmailReplyDrafts");
 
 export async function saveOrder(order: Order): Promise<void> {
   await orders.doc(String(order.chatId)).set({ ...order, updatedAt: new Date() });
@@ -53,3 +54,7 @@ export async function wasEmailProcessed(messageId: string): Promise<boolean> {
 export async function markEmailProcessed(messageId: string): Promise<void> {
   await processedEmails.doc(messageId).set({ processedAt: new Date() });
 }
+
+export async function saveGmailReplyDraft(draft: GmailReplyDraft): Promise<void> { await gmailReplyDrafts.doc(String(draft.chatId)).set(draft); }
+export async function getGmailReplyDraft(chatId: number): Promise<GmailReplyDraft | undefined> { const snapshot = await gmailReplyDrafts.doc(String(chatId)).get(); return snapshot.exists ? snapshot.data() as GmailReplyDraft : undefined; }
+export async function clearGmailReplyDraft(chatId: number): Promise<void> { await gmailReplyDrafts.doc(String(chatId)).delete(); }

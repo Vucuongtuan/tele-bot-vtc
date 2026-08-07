@@ -7,6 +7,7 @@ interface GmailMessagePart {
 
 interface GmailMessage {
   id: string;
+  threadId: string;
   payload?: GmailMessagePart;
 }
 
@@ -46,7 +47,7 @@ function findPlainText(part?: GmailMessagePart): string | undefined {
 }
 
 /** Reads matching Gmail orders once; invoke this from a user action, not a background timer. */
-export async function checkGmailOrders(onOrder: (order: { messageId: string; text: string; subject: string }) => Promise<boolean>): Promise<number> {
+export async function checkGmailOrders(onOrder: (order: { messageId: string; threadId: string; text: string; subject: string; from: string; rfcMessageId?: string }) => Promise<boolean>): Promise<number> {
   if (!configured()) throw new Error("Gmail order integration is not configured");
   const token = await accessToken();
   const headers = { Authorization: `Bearer ${token}` };
@@ -65,7 +66,19 @@ export async function checkGmailOrders(onOrder: (order: { messageId: string; tex
     const message = await response.json() as GmailMessage;
     const text = findPlainText(message.payload);
     const subject = message.payload?.headers?.find((header) => header.name?.toLowerCase() === "subject")?.value ?? "";
-    if (text && await onOrder({ messageId: message.id, text, subject })) processed += 1;
+    const header = (name: string) => message.payload?.headers?.find((item) => item.name?.toLowerCase() === name)?.value;
+    if (text && await onOrder({ messageId: message.id, threadId: message.threadId, text, subject, from: header("from") ?? "", rfcMessageId: header("message-id") })) processed += 1;
   }
   return processed;
+}
+
+const headerSafe = (value: string) => value.replace(/[\r\n]/g, " ");
+const base64Url = (value: string) => Buffer.from(value).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+export async function sendGmailOrderReply(draft: { threadId: string; from: string; subject: string; rfcMessageId?: string; folderName: string }): Promise<void> {
+  if (!configured()) throw new Error("Gmail order integration is not configured");
+  const link = `https://newsletter.wowweekend.vn/${encodeURIComponent(draft.folderName)}/vi/`;
+  const message = [`To: ${headerSafe(draft.from)}`, `Subject: Re: ${headerSafe(draft.subject)}`, ...(draft.rfcMessageId ? [`In-Reply-To: ${headerSafe(draft.rfcMessageId)}`, `References: ${headerSafe(draft.rfcMessageId)}`] : []), "Content-Type: text/plain; charset=UTF-8", "", "Dear team", "", "Em gửi link enew nhờ team check lại giúp nhé", "", `Link: ${link}`, "", "Trân trọng,"].join("\r\n");
+  const response = await fetch(`${gmailApi}/messages/send`, { method: "POST", headers: { Authorization: `Bearer ${await accessToken()}`, "content-type": "application/json" }, body: JSON.stringify({ threadId: draft.threadId, raw: base64Url(message) }) });
+  if (!response.ok) throw new Error(`Gmail send failed (${response.status})`);
 }

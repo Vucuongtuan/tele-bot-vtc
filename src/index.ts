@@ -6,10 +6,10 @@ import Fastify from "fastify";
 import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
 import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildJewelryTemplate2PreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
-import { checkGmailOrders } from "./gmail.js";
+import { checkGmailOrders, sendGmailOrderReply } from "./gmail.js";
 import { parseContent } from "./parser.js";
 import { jewelryTemplate1Form, parseJewelryTemplate1, parseJewelryTemplate2, renderJewelryTemplate1, renderJewelryTemplate2 } from "./jewelry.js";
-import { clearOrder, getOrder, markEmailProcessed, saveOrder, wasEmailProcessed } from "./store.js";
+import { clearGmailReplyDraft, clearOrder, getGmailReplyDraft, getOrder, markEmailProcessed, saveGmailReplyDraft, saveOrder, wasEmailProcessed } from "./store.js";
 import { renderNewsletter } from "./template.js";
 import { fetchPayloadImages } from "./payload.js";
 import type { Order } from "./types.js";
@@ -72,14 +72,14 @@ const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_marku
   return ctx.reply(`Kiểm tra trước khi export\n\nNgày: ${order.folderName}\nNguồn ảnh: ${source}\nSố bài: ${articles.length}\n\n${list}`, { reply_markup: keyboard });
 };
 
-async function preparePayloadOrder(chatId: number, content: string, folderName = todayFolderName()): Promise<boolean> {
+async function preparePayloadOrder(chatId: number, content: string, folderName = todayFolderName(), gmail?: Order["gmail"]): Promise<boolean> {
   const articles = parseContent(content);
   if (!articles.length) return false;
   if (await getOrder(chatId)) {
     await bot.api.sendMessage(chatId, "Có WWK email mới nhưng bot đang có một order chưa hoàn tất. Hãy export hoặc /cancel order hiện tại trước.");
     return false;
   }
-  const order: Order = { chatId, folderName, template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date() };
+  const order: Order = { chatId, folderName, template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date(), gmail };
   await saveOrder(order);
   try {
     const images = await fetchPayloadImages(articles);
@@ -134,6 +134,11 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
     await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
     await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
     await clearOrder(order.chatId);
+    if (order.gmail) {
+      await saveGmailReplyDraft({ chatId: order.chatId, folderName: order.folderName, ...order.gmail });
+      const keyboard = new InlineKeyboard().text("Gửi mail báo link e-news", "gmail:reply").text("Không gửi mail", "gmail:cancel");
+      await ctx.reply("Sau khi bạn upload file và server build xong, bấm nút để reply mail gốc.", { reply_markup: keyboard });
+    }
     try {
       const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
       if (publishStatus === "pushed") await ctx.reply("Đã push folder newsletter lên GitHub.");
@@ -268,6 +273,26 @@ bot.callbackQuery("export:confirm", async (ctx) => {
   return exportWwk(ctx, order);
 });
 
+bot.callbackQuery("gmail:reply", async (ctx) => {
+  const draft = await getGmailReplyDraft(ctx.chat!.id);
+  if (!draft) return ctx.answerCallbackQuery({ text: "Không có mail nào đang chờ reply." });
+  await ctx.answerCallbackQuery();
+  try {
+    await sendGmailOrderReply(draft);
+    await clearGmailReplyDraft(draft.chatId);
+    return ctx.reply("Đã reply mail gốc với link e-news.");
+  } catch (error) {
+    app.log.error(error, "Gmail order reply failed");
+    return ctx.reply("Không gửi được mail. Kiểm tra Gmail OAuth scope rồi thử lại.");
+  }
+});
+
+bot.callbackQuery("gmail:cancel", async (ctx) => {
+  await clearGmailReplyDraft(ctx.chat!.id);
+  await ctx.answerCallbackQuery();
+  return ctx.reply("Đã hủy gửi mail báo e-news.");
+});
+
 bot.on("message:document", async (ctx) => {
   const order = await getOrder(ctx.chat.id);
   const document = ctx.message.document;
@@ -342,7 +367,7 @@ bot.command("checkwwk", async (ctx) => {
   if (ctx.chat.id !== gmailOrderChatId) return ctx.reply("Chat này không được phép kiểm tra Gmail order.");
   await ctx.reply("Đang kiểm tra Gmail order WWK…");
   try {
-    const processed = await checkGmailOrders(async ({ messageId, text, subject }) => {
+    const processed = await checkGmailOrders(async ({ messageId, threadId, text, subject, from, rfcMessageId }) => {
     if (await wasEmailProcessed(messageId)) return false;
     const folderName = folderNameFromEmailSubject(subject);
     if (!folderName) {
@@ -350,7 +375,7 @@ bot.command("checkwwk", async (ctx) => {
       await markEmailProcessed(messageId);
       return false;
     }
-    const accepted = await preparePayloadOrder(gmailOrderChatId, text, folderName);
+    const accepted = await preparePayloadOrder(gmailOrderChatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });
     if (accepted) await markEmailProcessed(messageId);
     return accepted;
     });

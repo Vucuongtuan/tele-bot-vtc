@@ -58,4 +58,15 @@ export interface Order {
   imageSource?: "zip" | "payload";
   status: OrderStatus;
   updatedAt: Date;
+  gmail?: { messageId: string; threadId: string; from: string; subject: string; rfcMessageId?: string };
+}
+
+export interface GmailReplyDraft {
+  chatId: number;
+  folderName: string;
+  messageId: string;
+  threadId: string;
+  from: string;
+  subject: string;
+  rfcMessageId?: string;
 }
