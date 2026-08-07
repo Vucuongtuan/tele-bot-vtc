@@ -6,7 +6,7 @@ import Fastify from "fastify";
 import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
 import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildJewelryTemplate2PreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
-import { startGmailOrderPolling } from "./gmail.js";
+import { checkGmailOrders } from "./gmail.js";
 import { parseContent } from "./parser.js";
 import { jewelryTemplate1Form, parseJewelryTemplate1, parseJewelryTemplate2, renderJewelryTemplate1, renderJewelryTemplate2 } from "./jewelry.js";
 import { clearOrder, getOrder, markEmailProcessed, saveOrder, wasEmailProcessed } from "./store.js";
@@ -26,6 +26,7 @@ try {
   { command: "new", description: "Tạo newsletter mới" },
     { command: "clean", description: "Xóa toàn bộ order hiện tại để làm lại" },
     { command: "cancel", description: "Hủy order hiện tại" },
+    { command: "checkwwk", description: "Kiểm tra mail order WWK mới" },
   ]);
 } catch (error) {
   app.log.warn(error, "Could not update Telegram command menu");
@@ -327,16 +328,23 @@ app.post("/telegram/webhook", async (request, reply) => {
 });
 
 const gmailOrderChatId = Number(process.env.TELEGRAM_ORDER_CHAT_ID);
-if (Number.isInteger(gmailOrderChatId) && gmailOrderChatId > 0) {
-  startGmailOrderPolling(async (messageId, text) => {
+bot.command("checkwwk", async (ctx) => {
+  if (!Number.isInteger(gmailOrderChatId) || gmailOrderChatId <= 0) return ctx.reply("Gmail order chưa được cấu hình: thiếu TELEGRAM_ORDER_CHAT_ID.");
+  if (ctx.chat.id !== gmailOrderChatId) return ctx.reply("Chat này không được phép kiểm tra Gmail order.");
+  await ctx.reply("Đang kiểm tra Gmail order WWK…");
+  try {
+    const processed = await checkGmailOrders(async (messageId, text) => {
     if (await wasEmailProcessed(messageId)) return false;
     const accepted = await preparePayloadOrder(gmailOrderChatId, text);
     if (accepted) await markEmailProcessed(messageId);
     return accepted;
-  }, app.log);
-} else if (process.env.GMAIL_ORDER_SENDER) {
-  app.log.warn("GMAIL_ORDER_SENDER is set but TELEGRAM_ORDER_CHAT_ID is missing or invalid; Gmail order polling is disabled");
-}
+    });
+    return ctx.reply(processed ? `Đã tạo ${processed} order WWK từ Gmail.` : "Không có mail WWK mới cần xử lý.");
+  } catch (error) {
+    app.log.error(error, "Manual Gmail order check failed");
+    return ctx.reply("Không thể kiểm tra Gmail. Kiểm tra cấu hình OAuth/Gmail rồi thử lại.");
+  }
+});
 
 const port = Number(process.env.PORT ?? 8080);
 await app.listen({ port, host: "0.0.0.0" });

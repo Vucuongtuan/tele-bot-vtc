@@ -40,35 +40,23 @@ function findPlainText(part?: GmailMessagePart): string | undefined {
   return part.parts?.map(findPlainText).find(Boolean);
 }
 
-/** Polls unreadable-by-design mail safely: only the configured sender and [WWK] subject are considered. */
-export function startGmailOrderPolling(onOrder: (messageId: string, text: string) => Promise<boolean>, log: { info: (value: unknown, message?: string) => void; error: (value: unknown, message?: string) => void }): void {
-  if (!configured()) return;
-  const intervalMs = Math.max(60, Number(process.env.GMAIL_ORDER_POLL_SECONDS ?? 120)) * 1000;
-  let polling = false;
-  const poll = async () => {
-    if (polling) return;
-    polling = true;
-    try {
-      const token = await accessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const sender = process.env.GMAIL_ORDER_SENDER!;
-      const query = new URLSearchParams({ q: `from:${sender} subject:"[WWK]"`, maxResults: "10" });
-      const list = await fetch(`${gmailApi}/messages?${query}`, { headers });
-      if (!list.ok) throw new Error(`Gmail message list failed (${list.status})`);
-      const body = await list.json() as { messages?: Array<{ id: string }> };
-      for (const item of body.messages ?? []) {
-        const response = await fetch(`${gmailApi}/messages/${item.id}?format=full`, { headers });
-        if (!response.ok) throw new Error(`Gmail message read failed (${response.status})`);
-        const message = await response.json() as GmailMessage;
-        const text = findPlainText(message.payload);
-        if (text && await onOrder(message.id, text)) log.info({ messageId: item.id }, "Processed WWK Gmail order");
-      }
-    } catch (error) {
-      log.error(error, "Gmail order poll failed");
-    } finally {
-      polling = false;
-    }
-  };
-  void poll();
-  setInterval(() => void poll(), intervalMs).unref();
+/** Reads matching Gmail orders once; invoke this from a user action, not a background timer. */
+export async function checkGmailOrders(onOrder: (messageId: string, text: string) => Promise<boolean>): Promise<number> {
+  if (!configured()) throw new Error("Gmail order integration is not configured");
+  const token = await accessToken();
+  const headers = { Authorization: `Bearer ${token}` };
+  const sender = process.env.GMAIL_ORDER_SENDER!;
+  const query = new URLSearchParams({ q: `from:${sender} subject:"[WWK]"`, maxResults: "10" });
+  const list = await fetch(`${gmailApi}/messages?${query}`, { headers });
+  if (!list.ok) throw new Error(`Gmail message list failed (${list.status})`);
+  const body = await list.json() as { messages?: Array<{ id: string }> };
+  let processed = 0;
+  for (const item of body.messages ?? []) {
+    const response = await fetch(`${gmailApi}/messages/${item.id}?format=full`, { headers });
+    if (!response.ok) throw new Error(`Gmail message read failed (${response.status})`);
+    const message = await response.json() as GmailMessage;
+    const text = findPlainText(message.payload);
+    if (text && await onOrder(message.id, text)) processed += 1;
+  }
+  return processed;
 }
