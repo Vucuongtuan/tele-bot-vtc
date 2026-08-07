@@ -47,7 +47,7 @@ PAYLOAD_API_KEY=your-payload-user-api-key
 
 ### Optional: automatically start WWK orders from Gmail
 
-Use `/checkwwk` in Telegram to check Gmail on demand. It reads emails from one trusted sender whose subject contains `[WWK]`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
+Use `/checkwwk` in Telegram to check Gmail on demand. It reads emails from one trusted sender whose subject contains `WWK`, such as `WWK | Order E-News ngày 9/8/2026`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
 
 Each check reads only the single newest matching email; it never backfills historical orders.
 
