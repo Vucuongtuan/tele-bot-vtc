@@ -45,7 +45,7 @@ PAYLOAD_API_URL=https://wowweekend.vn/api
 PAYLOAD_API_KEY=your-payload-user-api-key
 ```
 
-### Optional: automatically start WWK orders from Gmail
+### Optional: check WWK orders from Gmail manually
 
 Use `/checkwwk` in Telegram to check Gmail on demand. It reads emails from one trusted sender whose subject contains both `WWK` and `E-News`, such as `WWK | Order E-News ngày 9/8/2026`. A valid WWK content body automatically fetches images from Payload, sends previews, and waits for the usual Export confirmation button. No background polling or cron is used.
 
@@ -63,7 +63,28 @@ GMAIL_OAUTH_CLIENT_SECRET=google-oauth-client-secret
 GMAIL_OAUTH_REFRESH_TOKEN=google-oauth-refresh-token
 ```
 
-Only successfully parsed and previewed messages are recorded as processed in Firestore. The order is sent to the Telegram chat that invokes `/checkwwk`; keep the bot private if its Gmail integration should not be usable by other people.
+Successfully handled manual checks are recorded in Firestore. The order is sent to the Telegram chat that invokes `/checkwwk`; keep the bot private if its Gmail integration should not be usable by other people.
+
+### Recommended: Gmail push via Google Apps Script
+
+To avoid missing an order, install [gmail-order-push.gs](scripts/gmail-order-push.gs) as a standalone Google Apps Script. Give it a time-driven trigger (for example, every 5 minutes). When a matching email arrives, it calls the backend and Telegram shows **Làm order** / **Bỏ qua**. Images are fetched only after you choose **Làm order**. The `/checkwwk` fallback remains available.
+
+Set these backend variables, using a random secret (for example, `openssl rand -hex 32`):
+
+```dotenv
+GMAIL_PUSH_SECRET=long-random-secret
+# The private Telegram chat ID that receives new-order prompts.
+GMAIL_PUSH_CHAT_ID=123456789
+```
+
+In Apps Script → **Project Settings** → **Script Properties**, set:
+
+```text
+BACKEND_GMAIL_ORDER_URL=https://your-backend.example/gmail/order
+BACKEND_GMAIL_PUSH_SECRET=same-value-as-GMAIL_PUSH_SECRET
+```
+
+The script applies the Gmail label `WWK-Forwarded` only after the backend acknowledges the order, so a temporary backend failure will be retried on the next trigger.
 
 Generate the webhook secret with:
 

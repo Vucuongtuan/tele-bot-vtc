@@ -1,5 +1,5 @@
 import { Firestore } from "@google-cloud/firestore";
-import type { GmailReplyDraft, Order } from "./types.js";
+import type { GmailReplyDraft, Order, PendingGmailOrder } from "./types.js";
 
 interface FirebaseServiceAccount {
   project_id: string;
@@ -33,6 +33,7 @@ const db = createFirestore();
 const orders = db.collection("telegramOrders");
 const processedEmails = db.collection("processedOrderEmails");
 const gmailReplyDrafts = db.collection("gmailReplyDrafts");
+const pendingGmailOrders = db.collection("pendingGmailOrders");
 
 export async function saveOrder(order: Order): Promise<void> {
   await orders.doc(String(order.chatId)).set({ ...order, updatedAt: new Date() });
@@ -53,6 +54,19 @@ export async function wasEmailProcessed(messageId: string): Promise<boolean> {
 
 export async function markEmailProcessed(messageId: string): Promise<void> {
   await processedEmails.doc(messageId).set({ processedAt: new Date() });
+}
+
+export async function savePendingGmailOrder(order: PendingGmailOrder): Promise<void> {
+  await pendingGmailOrders.doc(order.messageId).set(order);
+}
+
+export async function getPendingGmailOrder(messageId: string): Promise<PendingGmailOrder | undefined> {
+  const snapshot = await pendingGmailOrders.doc(messageId).get();
+  return snapshot.exists ? snapshot.data() as PendingGmailOrder : undefined;
+}
+
+export async function clearPendingGmailOrder(messageId: string): Promise<void> {
+  await pendingGmailOrders.doc(messageId).delete();
 }
 
 export async function saveGmailReplyDraft(draft: GmailReplyDraft): Promise<void> { await gmailReplyDrafts.doc(String(draft.chatId)).set(draft); }

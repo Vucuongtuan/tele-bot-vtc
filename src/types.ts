@@ -70,3 +70,14 @@ export interface GmailReplyDraft {
   subject: string;
   rfcMessageId?: string;
 }
+
+export interface PendingGmailOrder {
+  messageId: string;
+  threadId: string;
+  text: string;
+  subject: string;
+  from: string;
+  rfcMessageId?: string;
+  folderName: string;
+  receivedAt: Date;
+}

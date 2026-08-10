@@ -10,6 +10,15 @@ const categories = [
 
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Converts the common plain-text/Markdown email presentation to one line. */
+function normalizeLine(value: string): string {
+  const markdownUrl = value.trim().match(/^\[[^\]]*\]\((https?:\/\/[^\s)]+)\)$/);
+  if (markdownUrl) return markdownUrl[1];
+  return value.trim()
+    .replace(/^\*{1,3}\s*(.*?)\s*\*{1,3}$/, "$1")
+    .replace(/^_{1,3}\s*(.*?)\s*_{1,3}$/, "$1");
+}
+
 /**
  * Editors often paste category labels in uppercase or with a colon/dash.
  * Match those presentation differences, but always return the canonical label
@@ -30,21 +39,31 @@ function readCategory(line: string): { cate: string; title: string } | undefined
 export function parseContent(text: string): Article[] {
   const result: Article[] = [];
   let current: Partial<Article> | undefined;
-  for (const rawLine of text.split("\n").map((line) => line.trim()).filter(Boolean)) {
-    const category = readCategory(rawLine);
+  for (const line of text.split("\n").map(normalizeLine).filter(Boolean)) {
+    const category = readCategory(line);
     if (category) {
       if (isComplete(current)) result.push(current);
       current = { cate: category.cate, title: category.title || undefined };
-    } else if (current && !current.url && /^https:\/\//.test(rawLine)) {
-      current.url = rawLine;
+    } else if (current && !current.url && /^https:\/\//.test(line)) {
+      current.url = line;
     } else if (current && !current.title) {
-      current.title = rawLine;
+      current.title = line;
     } else if (current?.url && !current.des) {
-      current.des = rawLine;
+      current.des = line;
     }
   }
   if (isComplete(current)) result.push(current);
   return result;
+}
+
+/**
+ * Keeps only complete newsletter blocks, deliberately removing email greetings,
+ * sign-offs, and signatures before an order is persisted.
+ */
+export function cleanNewsletterContent(text: string): string | undefined {
+  const articles = parseContent(text);
+  if (!articles.length) return undefined;
+  return articles.map((article) => [article.cate, article.title, article.url, article.des].join("\n")).join("\n\n");
 }
 
 function isComplete(article: Partial<Article> | undefined): article is Article {

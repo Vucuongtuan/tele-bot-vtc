@@ -7,9 +7,9 @@ import { Bot, InlineKeyboard, InputFile, InputMediaBuilder, webhookCallback } fr
 import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildJewelryTemplate2PreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
 import { checkGmailOrders, sendGmailOrderReply } from "./gmail.js";
-import { parseContent } from "./parser.js";
+import { cleanNewsletterContent, parseContent } from "./parser.js";
 import { jewelryTemplate1Form, parseJewelryTemplate1, parseJewelryTemplate2, renderJewelryTemplate1, renderJewelryTemplate2 } from "./jewelry.js";
-import { clearGmailReplyDraft, clearOrder, getGmailReplyDraft, getOrder, markEmailProcessed, saveGmailReplyDraft, saveOrder, wasEmailProcessed } from "./store.js";
+import { clearGmailReplyDraft, clearOrder, clearPendingGmailOrder, getGmailReplyDraft, getOrder, getPendingGmailOrder, markEmailProcessed, saveGmailReplyDraft, saveOrder, savePendingGmailOrder, wasEmailProcessed } from "./store.js";
 import { renderNewsletter } from "./template.js";
 import { fetchPayloadImages } from "./payload.js";
 import type { Order } from "./types.js";
@@ -17,6 +17,8 @@ import type { Order } from "./types.js";
 const token = process.env.TELEGRAM_BOT_TOKEN;
 if (!token) throw new Error("TELEGRAM_BOT_TOKEN is required");
 const webhookSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+const gmailPushSecret = process.env.GMAIL_PUSH_SECRET;
+const gmailPushChatId = Number(process.env.GMAIL_PUSH_CHAT_ID);
 const bot = new Bot(token);
 const app = Fastify({ logger: true });
 
@@ -73,13 +75,15 @@ const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_marku
 };
 
 async function preparePayloadOrder(chatId: number, content: string, folderName = todayFolderName(), gmail?: Order["gmail"]): Promise<boolean> {
-  const articles = parseContent(content);
+  const cleanedContent = cleanNewsletterContent(content);
+  if (!cleanedContent) return false;
+  const articles = parseContent(cleanedContent);
   if (!articles.length) return false;
   if (await getOrder(chatId)) {
     await bot.api.sendMessage(chatId, "Có WWK email mới nhưng bot đang có một order chưa hoàn tất. Hãy export hoặc /cancel order hiện tại trước.");
     return false;
   }
-  const order: Order = { chatId, folderName, template: "wwk", content, imageSource: "payload", status: "processing", updatedAt: new Date(), gmail };
+  const order: Order = { chatId, folderName, template: "wwk", content: cleanedContent, imageSource: "payload", status: "processing", updatedAt: new Date(), gmail };
   await saveOrder(order);
   try {
     const images = await fetchPayloadImages(articles);
@@ -306,6 +310,24 @@ bot.callbackQuery("gmail:cancel", async (ctx) => {
   return ctx.reply("Đã hủy gửi mail báo e-news.");
 });
 
+bot.callbackQuery(/^gmail:order:(accept|reject):([a-f0-9]+)$/i, async (ctx) => {
+  if (ctx.chat?.id !== gmailPushChatId) return ctx.answerCallbackQuery({ text: "Nút này chỉ dùng được trong chat nhận order." });
+  const action = ctx.match[1];
+  const messageId = ctx.match[2];
+  const pending = await getPendingGmailOrder(messageId);
+  if (!pending) return ctx.answerCallbackQuery({ text: "Order này không còn chờ xử lý." });
+  if (action === "reject") {
+    await clearPendingGmailOrder(messageId);
+    await ctx.answerCallbackQuery({ text: "Đã bỏ qua order." });
+    return ctx.reply("Đã bỏ qua order WWK này.");
+  }
+  await ctx.answerCallbackQuery();
+  const accepted = await preparePayloadOrder(ctx.chat!.id, pending.text, pending.folderName, pending);
+  if (!accepted) return ctx.reply("Chưa thể bắt đầu order này. Hãy hoàn tất hoặc /cancel order hiện tại rồi bấm lại nút Làm order.");
+  await markEmailProcessed(messageId);
+  await clearPendingGmailOrder(messageId);
+});
+
 bot.on("message:document", async (ctx) => {
   const order = await getOrder(ctx.chat.id);
   const document = ctx.message.document;
@@ -367,6 +389,43 @@ bot.on("message:document", async (ctx) => {
 });
 
 app.get("/health", async () => ({ ok: true }));
+app.post("/gmail/order", async (request, reply) => {
+  if (!gmailPushSecret || request.headers["x-gmail-push-secret"] !== gmailPushSecret) {
+    return reply.code(401).send({ error: "Unauthorized" });
+  }
+  if (!Number.isSafeInteger(gmailPushChatId) || gmailPushChatId <= 0) {
+    app.log.error("GMAIL_PUSH_CHAT_ID is not configured");
+    return reply.code(503).send({ error: "Gmail push destination is not configured" });
+  }
+
+  const body = request.body as Partial<{ messageId: string; threadId: string; text: string; subject: string; from: string; rfcMessageId: string }>;
+  if (!body.messageId || !body.threadId || !body.text || !body.subject || !body.from) {
+    return reply.code(400).send({ error: "messageId, threadId, text, subject, and from are required" });
+  }
+  const folderName = folderNameFromEmailSubject(body.subject);
+  const cleanedContent = cleanNewsletterContent(body.text);
+  if (!folderName || !cleanedContent) {
+    return reply.code(400).send({ error: "The message is not a valid WWK order" });
+  }
+  if (await wasEmailProcessed(body.messageId) || await getPendingGmailOrder(body.messageId)) {
+    return { ok: true, duplicate: true };
+  }
+
+  const pending = { ...body, messageId: body.messageId, threadId: body.threadId, text: cleanedContent, subject: body.subject, from: body.from, folderName, receivedAt: new Date() };
+  await savePendingGmailOrder(pending);
+  try {
+    const articleCount = parseContent(pending.text).length;
+    const keyboard = new InlineKeyboard().text("Làm order", `gmail:order:accept:${pending.messageId}`).text("Bỏ qua", `gmail:order:reject:${pending.messageId}`);
+    await bot.api.sendMessage(gmailPushChatId, `Có order WWK mới (${articleCount} bài)\nNgày: ${folderName}\nSubject: ${pending.subject}`, { reply_markup: keyboard });
+    // This prevents the manual Gmail fallback from starting the same order
+    // before the user has answered the Telegram prompt.
+    await markEmailProcessed(pending.messageId);
+    return { ok: true };
+  } catch (error) {
+    await clearPendingGmailOrder(pending.messageId);
+    throw error;
+  }
+});
 app.post("/telegram/webhook", async (request, reply) => {
   if (webhookSecret && request.headers["x-telegram-bot-api-secret-token"] !== webhookSecret) {
     return reply.code(401).send({ error: "Invalid Telegram webhook secret" });
