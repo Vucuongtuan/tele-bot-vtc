@@ -30,6 +30,10 @@ function readCategory(line: string): { cate: string; title: string } | undefined
     const pattern = escapeRegex(cate)
       .replace(/\s+/g, "\\s+")
       .replace(/'/g, "['’]");
+    // Gmail's plain-text version can collapse `*Category*Title` onto one
+    // line. Read the Markdown-wrapped category before the normal form.
+    const markdownMatch = withoutLabel.match(new RegExp(`^(?:\\*{1,3}|_{1,3})${pattern}(?:\\*{1,3}|_{1,3})(.*)$`, "i"));
+    if (markdownMatch) return { cate, title: markdownMatch[1].trim() };
     const match = withoutLabel.match(new RegExp(`^${pattern}(?=\\s|:|-|–|—|$)\\s*(?:[:\-–—]\\s*)?(.*)$`, "i"));
     if (match) return { cate, title: match[1].trim() };
   }
@@ -39,17 +43,29 @@ function readCategory(line: string): { cate: string; title: string } | undefined
 export function parseContent(text: string): Article[] {
   const result: Article[] = [];
   let current: Partial<Article> | undefined;
-  for (const line of text.split("\n").map(normalizeLine).filter(Boolean)) {
+  let descriptionEnded = false;
+  for (const rawLine of text.split("\n")) {
+    const line = normalizeLine(rawLine);
+    if (!line) {
+      if (current?.des) descriptionEnded = true;
+      continue;
+    }
     const category = readCategory(line);
     if (category) {
       if (isComplete(current)) result.push(current);
       current = { cate: category.cate, title: category.title || undefined };
+      descriptionEnded = false;
     } else if (current && !current.url && /^https:\/\//.test(line)) {
       current.url = line;
     } else if (current && !current.title) {
       current.title = line;
+    } else if (current && !current.url) {
+      current.title = `${current.title} ${line}`;
     } else if (current?.url && !current.des) {
       current.des = line;
+      descriptionEnded = false;
+    } else if (current?.des && !descriptionEnded) {
+      current.des = `${current.des} ${line}`;
     }
   }
   if (isComplete(current)) result.push(current);
