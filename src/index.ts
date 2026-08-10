@@ -155,7 +155,8 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
     if (order.gmail) {
       await saveGmailReplyDraft({ chatId: order.chatId, folderName: order.folderName, ...order.gmail });
       const keyboard = new InlineKeyboard().text("Gửi mail báo link e-news", "gmail:reply").text("Không gửi mail", "gmail:cancel");
-      await ctx.reply("Sau khi bạn upload file và server build xong, bấm nút để reply mail gốc.", { reply_markup: keyboard });
+      const link = `https://newsletter.wowweekend.vn/${encodeURIComponent(order.folderName)}/vi/`;
+      await ctx.reply(`Demo mail reply\n\nTới: ${order.gmail.from}\nSubject: Re: ${order.gmail.subject}\n\nDear team\n\nEm gửi link enew nhờ team check lại giúp nhé\n\nLink: ${link}\n\nTrân trọng,\n\nKiểm tra nội dung rồi bấm nút để gửi mail gốc.`, { reply_markup: keyboard });
     }
     try {
       const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
