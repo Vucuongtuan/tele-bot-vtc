@@ -84,7 +84,7 @@ BACKEND_GMAIL_ORDER_URL=https://your-backend.example/gmail/order
 BACKEND_GMAIL_PUSH_SECRET=same-value-as-GMAIL_PUSH_SECRET
 ```
 
-The script applies the Gmail label `WWK-Forwarded` only after the backend acknowledges the order, so a temporary backend failure will be retried on the next trigger.
+The script's first run establishes a start time and intentionally ignores older mail. From then on, it forwards every matching new mail even if you have already read it. It applies the Gmail label `WWK-Forwarded` only after the backend acknowledges the order, so a temporary backend failure will be retried on the next trigger.
 
 Generate the webhook secret with:
 
