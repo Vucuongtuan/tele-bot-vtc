@@ -12,6 +12,12 @@
 const FORWARDED_LABEL = "WWK-Forwarded";
 const START_AFTER_KEY = "WWK_ORDER_PUSH_START_AFTER";
 
+/** Run manually to ignore every order received before this moment. */
+function resetWwkOrderPushStart() {
+  PropertiesService.getScriptProperties().setProperty(START_AFTER_KEY, String(Date.now()));
+  console.log("WWK order push start time was reset. Older orders will be ignored.");
+}
+
 function checkWwkOrders() {
   const props = PropertiesService.getScriptProperties();
   const endpoint = props.getProperty("BACKEND_GMAIL_ORDER_URL");
