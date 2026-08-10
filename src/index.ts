@@ -28,6 +28,7 @@ try {
   { command: "new", description: "Tạo newsletter mới" },
     { command: "clean", description: "Xóa toàn bộ order hiện tại để làm lại" },
     { command: "cancel", description: "Hủy order hiện tại" },
+    { command: "chatid", description: "Xem ID chat hiện tại" },
     { command: "checkwwk", description: "Kiểm tra mail order WWK mới" },
   ]);
 } catch (error) {
@@ -173,6 +174,7 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
 }
 
 bot.command("start", (ctx) => ctx.reply("Bấm /new để chọn loại newsletter, hoặc kiểm tra order WWK từ Gmail.", { reply_markup: new InlineKeyboard().text("Kiểm tra mail WWK", "gmail:check") }));
+bot.command("chatid", (ctx) => ctx.reply(`Chat ID của bạn: ${ctx.chat.id}`));
 bot.command("new", async (ctx) => {
   const parts = ctx.match.trim().split(/\s+/);
   if (!ctx.match.trim()) {
