@@ -3,7 +3,7 @@ import { createWriteStream, promises as fs } from "node:fs";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import Fastify from "fastify";
-import { Bot, InlineKeyboard, InputFile, webhookCallback } from "grammy";
+import { Bot, InlineKeyboard, InputFile, InputMediaBuilder, webhookCallback } from "grammy";
 import { buildExportZip, buildExportZipFromImages, buildJewelryPreviewHtml, buildJewelryTemplate2PreviewHtml, buildPreviewHtml, makeWorkDir } from "./archive.js";
 import { publishExportToGitHub } from "./github.js";
 import { checkGmailOrders, sendGmailOrderReply } from "./gmail.js";
@@ -83,8 +83,19 @@ async function preparePayloadOrder(chatId: number, content: string, folderName =
   await saveOrder(order);
   try {
     const images = await fetchPayloadImages(articles);
-    for (const [index, image] of images.entries()) {
-      await bot.api.sendPhoto(chatId, new InputFile(image, `preview-${index + 1}.jpg`), { caption: `${index + 1}. ${articles[index].title}` });
+    // Telegram renders a media group as one compact album. Its limit is 2–10
+    // images, so only orders above ten images need more than one album.
+    for (let start = 0; start < images.length; start += 10) {
+      const batch = images.slice(start, start + 10);
+      if (batch.length === 1) {
+        const index = start;
+        await bot.api.sendPhoto(chatId, new InputFile(batch[0], `preview-${index + 1}.jpg`), { caption: `${index + 1}. ${articles[index].title}` });
+        continue;
+      }
+      await bot.api.sendMediaGroup(chatId, batch.map((image, offset) => {
+        const index = start + offset;
+        return InputMediaBuilder.photo(new InputFile(image, `preview-${index + 1}.jpg`), { caption: `${index + 1}. ${articles[index].title}` });
+      }));
     }
     const prepared = { ...order, status: "waiting_confirmation" as const, updatedAt: new Date() };
     await saveOrder(prepared);
