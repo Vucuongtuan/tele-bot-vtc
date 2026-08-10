@@ -99,7 +99,9 @@ async function preparePayloadOrder(chatId: number, content: string, folderName =
 }
 
 function folderNameFromEmailSubject(subject: string): string | undefined {
-  const match = subject.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  // Orders are usually written as d/m/yyyy, but Gmail subjects also commonly
+  // use hyphens (and sometimes typographic dashes) as separators.
+  const match = subject.match(/\b(\d{1,2})\s*[\/\-–—]\s*(\d{1,2})\s*[\/\-–—]\s*(\d{4})\b/);
   if (!match) return undefined;
   const [, day, month, year] = match;
   const date = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
@@ -367,8 +369,7 @@ async function checkWwkOrders(chatId: number): Promise<string> {
     if (await wasEmailProcessed(messageId)) return false;
     const folderName = folderNameFromEmailSubject(subject);
     if (!folderName) {
-      await bot.api.sendMessage(chatId, `Mail WWK có subject không chứa ngày dạng d/m/yyyy: ${subject}`);
-      await markEmailProcessed(messageId);
+      await bot.api.sendMessage(chatId, `Mail WWK có subject không chứa ngày hợp lệ (d/m/yyyy hoặc d-m-yyyy): ${subject}`);
       return false;
     }
     const accepted = await preparePayloadOrder(chatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });

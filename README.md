@@ -51,7 +51,7 @@ Use `/checkwwk` in Telegram to check Gmail on demand. It reads emails from one t
 
 Each check reads only the single newest matching email; it never backfills historical orders.
 
-The email subject must also include its newsletter date in Vietnamese numeric format, for example `[WWK] 9/8/2026`. The export folder will be `2026-08-09`.
+The email subject must also include its newsletter date in Vietnamese numeric format, using `/` or `-` separators, for example `[WWK] 9/8/2026` or `WWK | Order E-News ngày 9-8-2026`. The export folder will be `2026-08-09`.
 
 Create a Google OAuth client and a refresh token authorized with both `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.send` scopes, then set these secrets. The send scope is used only after you press the Telegram button to reply to the original order email.
 
