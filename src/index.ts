@@ -289,7 +289,10 @@ bot.on("message:text", async (ctx) => {
   }
   if (order.status !== "waiting_content") return;
   if (order.template?.startsWith("jewelry-")) {
-    const jewelryKeyboard = new InlineKeyboard().text("Gửi ZIP ảnh", "images:zip").row().text("Gửi ảnh trực tiếp", "images:individual");
+    const jewelryKeyboard = new InlineKeyboard()
+      .text("Gửi ZIP ảnh", "images:zip")
+      .row().text("Gửi ảnh trực tiếp", "images:individual")
+      .row().text("Export chỉ HTML (no images)", "export:htmlonly");
     if (order.template === "jewelry-2") {
       const parsed = parseJewelryTemplate2(ctx.message.text);
       if ("error" in parsed) return ctx.reply(`Chưa đọc được Jewelry template 2: ${parsed.error}`);
@@ -404,10 +407,49 @@ bot.callbackQuery("export:confirm", async (ctx) => {
 
 bot.callbackQuery("export:htmlonly", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
-  if (!order || order.template?.startsWith("jewelry-") || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  if (!order) return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  if (!(order.status === "waiting_confirmation" || order.status === "waiting_image_source")) return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
   await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
   await ctx.answerCallbackQuery();
   await ctx.reply("Đang tạo ZIP chỉ chứa HTML (không kèm ảnh)…");
+
+  // Jewelry templates need a different rendering path (use jewelry renderers)
+  if (order.template?.startsWith("jewelry-")) {
+    const workDir = await makeWorkDir(order.chatId);
+    try {
+      const outputPath = join(workDir, `${order.folderName}.zip`);
+      const jewelry1 = order.template === "jewelry-1" ? parseJewelryTemplate1(order.content!) : undefined;
+      const jewelry2 = order.template === "jewelry-2" ? parseJewelryTemplate2(order.content!) : undefined;
+      if (jewelry1 && "error" in jewelry1) throw new Error(jewelry1.error);
+      if (jewelry2 && "error" in jewelry2) throw new Error(jewelry2.error);
+      const html = jewelry2 ? renderJewelryTemplate2(order.folderName, jewelry2.value) : renderJewelryTemplate1(order.folderName, jewelry1!.value);
+      const count = await buildExportZipFromImages(outputPath, html, [], {
+        indexPath: "index.html",
+        imageName: (n) => `banner_${n}.jpg`,
+        includeImages: false,
+      });
+      const previewHtml = jewelry2 ? renderJewelryTemplate2(order.folderName, jewelry2.value) : renderJewelryTemplate1(order.folderName, jewelry1!.value);
+      await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (HTML only)." });
+      await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: "Hoàn tất: ZIP chỉ chứa HTML (không kèm ảnh)." });
+      await clearOrder(order.chatId);
+      try {
+        const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
+        if (publishStatus === "pushed") await ctx.reply("Đã push folder newsletter lên GitHub.");
+      } catch (error) {
+        app.log.warn(error, "GitHub publish failed after jewelry HTML-only export");
+        await ctx.reply("Đã tạo ZIP, nhưng chưa push được GitHub.");
+      }
+    } catch (error) {
+      app.log.error(error, "Jewelry HTML-only export failed");
+      await saveOrder({ ...order, status: "waiting_image_source", updatedAt: new Date() });
+      await ctx.reply("Không thể tạo ZIP chỉ chứa HTML. Kiểm tra nội dung và thử lại.");
+    } finally {
+      await fs.rm(workDir, { recursive: true, force: true });
+    }
+    return;
+  }
+
+  // Non-jewelry (WWK) fallback: reuse existing exportWwk path
   return exportWwk(ctx, order, false);
 });
 
