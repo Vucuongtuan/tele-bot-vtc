@@ -55,7 +55,8 @@ export interface Order {
   template?: NewsletterTemplate;
   content?: string;
   archiveFileId?: string;
-  imageSource?: "zip" | "payload";
+  imageSource?: "zip" | "payload" | "individual";
+  imageFileIds?: string[];
   status: OrderStatus;
   updatedAt: Date;
   gmail?: { messageId: string; threadId: string; from: string; subject: string; rfcMessageId?: string };

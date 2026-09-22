@@ -25,7 +25,7 @@ const app = Fastify({ logger: true });
 try {
   await bot.api.setMyCommands([
     { command: "start", description: "Xem hướng dẫn sử dụng bot" },
-  { command: "new", description: "Tạo newsletter mới" },
+    { command: "new", description: "Tạo newsletter mới" },
     { command: "clean", description: "Xóa toàn bộ order hiện tại để làm lại" },
     { command: "cancel", description: "Hủy order hiện tại" },
     { command: "chatid", description: "Xem ID chat hiện tại" },
@@ -69,9 +69,14 @@ const folderDateOptions = () => {
 
 const sendWwkConfirmation = (ctx: { reply: (text: string, options: { reply_markup: InlineKeyboard }) => Promise<unknown> }, order: Order) => {
   const articles = parseContent(order.content!);
-  const source = order.imageSource === "payload" ? "Payload (featured image)" : "ZIP ảnh";
+  const source = order.imageSource === "payload" ? "Payload (featured image)"
+    : order.imageSource === "individual" ? `${order.imageFileIds?.length ?? 0} ảnh gửi trực tiếp`
+      : "ZIP ảnh";
   const list = articles.map((article, index) => `${index + 1}. ${article.title}`).join("\n");
-  const keyboard = new InlineKeyboard().text("Tạo preview & export", "export:confirm").text("Sửa content", "export:edit");
+  const keyboard = new InlineKeyboard()
+    .text("Tạo preview & export", "export:confirm")
+    .text("Export chỉ HTML (no images)", "export:htmlonly")
+    .text("Sửa content", "export:edit");
   return ctx.reply(`Kiểm tra trước khi export\n\nNgày: ${order.folderName}\nNguồn ảnh: ${source}\nSố bài: ${articles.length}\n\n${list}`, { reply_markup: keyboard });
 };
 
@@ -125,7 +130,60 @@ function folderNameFromEmailSubject(subject: string): string | undefined {
   return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
 }
 
-async function exportWwk(ctx: any, order: Order): Promise<void> {
+async function downloadTelegramImages(api: any, fileIds: string[]): Promise<Buffer[]> {
+  const images: Buffer[] = [];
+  for (const fileId of fileIds) {
+    const file = await api.getFile(fileId);
+    if (!file.file_path) throw new Error("Telegram did not return a file path");
+    const res = await fetch(`https://api.telegram.org/file/bot${token}/${file.file_path}`);
+    if (!res.ok || !res.body) throw new Error("Could not download image from Telegram");
+    images.push(Buffer.from(await res.arrayBuffer()));
+  }
+  return images;
+}
+
+async function exportJewelryFromImages(ctx: any, order: Order): Promise<void> {
+  const workDir = await makeWorkDir(order.chatId);
+  try {
+    const outputPath = join(workDir, `${order.folderName}.zip`);
+    const images = await downloadTelegramImages(ctx.api, order.imageFileIds!);
+    const imageSources = images.map((img) => `data:image/jpeg;base64,${img.toString("base64")}`);
+    const jewelry1 = order.template === "jewelry-1" ? parseJewelryTemplate1(order.content!) : undefined;
+    const jewelry2 = order.template === "jewelry-2" ? parseJewelryTemplate2(order.content!) : undefined;
+    if (jewelry1 && "error" in jewelry1) throw new Error(jewelry1.error);
+    if (jewelry2 && "error" in jewelry2) throw new Error(jewelry2.error);
+    const html = jewelry2
+      ? renderJewelryTemplate2(order.folderName, jewelry2.value)
+      : renderJewelryTemplate1(order.folderName, jewelry1!.value);
+    const count = await buildExportZipFromImages(outputPath, html, images, {
+      indexPath: "index.html",
+      imageName: (n) => `banner_${n}.jpg`,
+    });
+    if (!count) throw new Error("Không có ảnh nào được đưa vào ZIP.");
+    if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
+    const previewHtml = jewelry2
+      ? renderJewelryTemplate2(order.folderName, jewelry2.value, imageSources)
+      : renderJewelryTemplate1(order.folderName, jewelry1!.value, imageSources);
+    await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
+    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
+    await clearOrder(ctx.chat.id);
+    try {
+      const publishStatus = await publishExportToGitHub(outputPath, order.folderName, workDir);
+      if (publishStatus === "pushed") await ctx.reply("Đã push folder newsletter lên GitHub.");
+    } catch (error) {
+      app.log.warn(error, "GitHub publish failed after jewelry export");
+      await ctx.reply("Đã tạo ZIP, nhưng chưa push được GitHub.");
+    }
+  } catch (error) {
+    app.log.error(error);
+    await saveOrder({ ...order, status: "waiting_file", updatedAt: new Date() });
+    await ctx.reply("Không thể xử lý ảnh. Kiểm tra lại và gửi lại ảnh.");
+  } finally {
+    await fs.rm(workDir, { recursive: true, force: true });
+  }
+}
+
+async function exportWwk(ctx: any, order: Order, includeImages = true): Promise<void> {
   const workDir = await makeWorkDir(order.chatId);
   try {
     const articles = parseContent(order.content!);
@@ -134,8 +192,13 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
     let previewHtml: string;
     if (order.imageSource === "payload") {
       const images = await fetchPayloadImages(articles);
-      count = await buildExportZipFromImages(outputPath, renderNewsletter(order.folderName, articles), images);
-      previewHtml = renderNewsletter(order.folderName, articles, images.map((image) => `data:image/jpeg;base64,${image.toString("base64")}`));
+      count = await buildExportZipFromImages(outputPath, renderNewsletter(order.folderName, articles), images, { includeImages: includeImages });
+      previewHtml = includeImages ? renderNewsletter(order.folderName, articles, images.map((image) => `data:image/jpeg;base64,${image.toString("base64")}`)) : renderNewsletter(order.folderName, articles);
+    } else if (order.imageSource === "individual") {
+      if (!order.imageFileIds?.length) throw new Error("Không có ảnh nào được gửi.");
+      const images = await downloadTelegramImages(ctx.api, order.imageFileIds);
+      count = await buildExportZipFromImages(outputPath, renderNewsletter(order.folderName, articles), images, { includeImages: includeImages });
+      previewHtml = includeImages ? renderNewsletter(order.folderName, articles, images.map((image) => `data:image/jpeg;base64,${image.toString("base64")}`)) : renderNewsletter(order.folderName, articles);
     } else {
       if (!order.archiveFileId) throw new Error("ZIP archive is missing");
       const file = await ctx.api.getFile(order.archiveFileId);
@@ -144,13 +207,15 @@ async function exportWwk(ctx: any, order: Order): Promise<void> {
       if (!download.ok || !download.body) throw new Error("Could not download archive from Telegram");
       const inputPath = join(workDir, "input.zip");
       await pipeline(download.body as never, createWriteStream(inputPath));
-      count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, articles));
-      if (!count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
-      previewHtml = await buildPreviewHtml(inputPath, order.folderName, articles);
+      count = await buildExportZip(inputPath, outputPath, order.folderName, renderNewsletter(order.folderName, articles), { includeImages: includeImages });
+      if (includeImages && !count) throw new Error("Không tìm thấy ảnh có tên dạng 1.jpg, 2.jpg… trong ZIP.");
+      previewHtml = includeImages ? await buildPreviewHtml(inputPath, order.folderName, articles) : renderNewsletter(order.folderName, articles);
     }
     if ((await fs.stat(outputPath)).size > 50 * 1024 * 1024) throw new Error("Output archive exceeds Telegram's 50 MB send limit");
-    await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: "Preview newsletter (ảnh được nhúng Base64)." });
-    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: `Hoàn tất: ${count} ảnh.` });
+    const previewCaption = includeImages ? "Preview newsletter (ảnh được nhúng Base64)." : "Preview newsletter (HTML only, no embedded images).";
+    await ctx.replyWithDocument(new InputFile(Buffer.from(previewHtml), `${order.folderName}-preview.html`), { caption: previewCaption });
+    const resultCaption = includeImages ? `Hoàn tất: ${count} ảnh.` : "Hoàn tất: ZIP chỉ chứa HTML (không kèm ảnh).";
+    await ctx.replyWithDocument(new InputFile(outputPath, `${order.folderName}.zip`), { caption: resultCaption });
     await clearOrder(order.chatId);
     if (order.gmail) {
       await saveGmailReplyDraft({ chatId: order.chatId, folderName: order.folderName, ...order.gmail });
@@ -224,27 +289,32 @@ bot.on("message:text", async (ctx) => {
   }
   if (order.status !== "waiting_content") return;
   if (order.template?.startsWith("jewelry-")) {
-    const parsed = order.template === "jewelry-1" ? parseJewelryTemplate1(ctx.message.text) : parseJewelryTemplate2(ctx.message.text);
+    const jewelryKeyboard = new InlineKeyboard().text("Gửi ZIP ảnh", "images:zip").row().text("Gửi ảnh trực tiếp", "images:individual");
+    if (order.template === "jewelry-2") {
+      const parsed = parseJewelryTemplate2(ctx.message.text);
+      if ("error" in parsed) return ctx.reply(`Chưa đọc được Jewelry template 2: ${parsed.error}`);
+      await saveOrder({ ...order, content: ctx.message.text, status: "waiting_image_source", updatedAt: new Date() });
+      return ctx.reply("Đã nhận Jewelry template 2: featured, 2 topic và 2 Your Pick. Chọn cách gửi ảnh:", { reply_markup: jewelryKeyboard });
+    }
+    const parsed = parseJewelryTemplate1(ctx.message.text);
     if ("error" in parsed) return ctx.reply(`Chưa đọc được Jewelry template 1: ${parsed.error}`);
-    await saveOrder({ ...order, content: ctx.message.text, status: "waiting_file", updatedAt: new Date() });
-    if (order.template === "jewelry-2") return ctx.reply("Đã nhận Jewelry template 2: featured, 2 topic và 2 Your Pick. Gửi ZIP ảnh (tối đa 20 MB) nhé.");
-    const template1 = parseJewelryTemplate1(ctx.message.text);
-    if ("error" in template1) return ctx.reply(`Chưa đọc được Jewelry template 1: ${template1.error}`);
-    const pairs = template1.value.blocks.filter((block) => block.type === "imagePair").length;
-    return ctx.reply(`Đã nhận Jewelry template 1: hero ảnh ${template1.value.heroImage}, ${pairs} cụm ảnh đôi, ${template1.value.credits.length} credit. Gửi ZIP ảnh (tối đa 20 MB) nhé.`);
+    await saveOrder({ ...order, content: ctx.message.text, status: "waiting_image_source", updatedAt: new Date() });
+    const pairs = parsed.value.blocks.filter((block) => block.type === "imagePair").length;
+    return ctx.reply(`Đã nhận Jewelry template 1: hero ảnh ${parsed.value.heroImage}, ${pairs} cụm ảnh đôi, ${parsed.value.credits.length} credit. Chọn cách gửi ảnh:`, { reply_markup: jewelryKeyboard });
   }
   const articles = parseContent(ctx.message.text);
   if (!articles.length) return ctx.reply("Không đọc được block hợp lệ. Mỗi block cần category, title, URL và mô tả.");
   await saveOrder({ ...order, content: ctx.message.text, status: "waiting_image_source", updatedAt: new Date() });
   const keyboard = new InlineKeyboard()
     .text("Gửi ZIP ảnh", "images:zip")
-    .text("Lấy ảnh từ Payload", "images:payload");
+    .text("Lấy ảnh từ Payload", "images:payload")
+    .row().text("Gửi ảnh trực tiếp", "images:individual");
   return ctx.reply(`Đã nhận ${articles.length} bài. Chọn nguồn ảnh:`, { reply_markup: keyboard });
 });
 
 bot.callbackQuery("images:zip", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
-  if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
+  if (!order || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
   await saveOrder({ ...order, status: "waiting_file", updatedAt: new Date() });
   await ctx.answerCallbackQuery();
   return ctx.reply("Gửi ZIP ảnh (tối đa 20 MB) nhé.");
@@ -252,7 +322,7 @@ bot.callbackQuery("images:zip", async (ctx) => {
 
 bot.callbackQuery("images:payload", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
-  if (!order || order.template === "jewelry-1" || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
+  if (!order || order.template?.startsWith("jewelry-") || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
   await ctx.answerCallbackQuery();
   // Lock the order before fetching. Callback queries can be delivered twice when
   // the button is tapped again while the Payload requests are still in flight.
@@ -276,9 +346,48 @@ bot.callbackQuery("images:payload", async (ctx) => {
   }
 });
 
+bot.callbackQuery("images:individual", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.status !== "waiting_image_source") return ctx.answerCallbackQuery({ text: "Order này không còn chờ chọn nguồn ảnh." });
+  await saveOrder({ ...order, imageSource: "individual", imageFileIds: [], status: "waiting_file", updatedAt: new Date() });
+  await ctx.answerCallbackQuery();
+  return ctx.reply("Sắp xếp ảnh đúng thứ tự rồi gửi tất cả vào chat (có thể gửi 1 lần dạng album). Khi đủ ảnh thì bấm nút bên dưới.", {
+    reply_markup: new InlineKeyboard().text("✅ Xong, tạo newsletter", "images:individual:done"),
+  });
+});
+
+bot.callbackQuery("images:individual:done", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.status !== "waiting_file" || order.imageSource !== "individual") return ctx.answerCallbackQuery({ text: "Order này không còn chờ nhận ảnh." });
+  if (!order.imageFileIds?.length) return ctx.answerCallbackQuery({ text: "Chưa có ảnh nào. Hãy gửi ít nhất 1 ảnh trước." });
+  await ctx.answerCallbackQuery();
+  if (order.template?.startsWith("jewelry-")) {
+    // Jewelry: export thẳng không qua bước confirmation
+    await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
+    await ctx.reply("Đang xử lý ảnh…");
+    return exportJewelryFromImages(ctx, order);
+  }
+  // WWK: qua bước confirmation
+  const prepared = { ...order, status: "waiting_confirmation" as const, updatedAt: new Date() };
+  await saveOrder(prepared);
+  return sendWwkConfirmation(ctx, prepared);
+});
+
+bot.on("message:photo", async (ctx) => {
+  const order = await getOrder(ctx.chat.id);
+  if (!order || order.status !== "waiting_file" || order.imageSource !== "individual") return;
+  // Lấy ảnh độ phân giải cao nhất trong message
+  const photo = ctx.message.photo.at(-1)!;
+  const fileIds = [...(order.imageFileIds ?? []), photo.file_id];
+  await saveOrder({ ...order, imageFileIds: fileIds, updatedAt: new Date() });
+  return ctx.reply(`Đã nhận ${fileIds.length} ảnh. Gửi thêm hoặc bấm Xong.`, {
+    reply_markup: new InlineKeyboard().text("✅ Xong, tạo newsletter", "images:individual:done"),
+  });
+});
+
 bot.callbackQuery("export:edit", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
-  if (!order || order.template === "jewelry-1" || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  if (!order || order.template?.startsWith("jewelry-") || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
   await saveOrder({ ...order, status: "waiting_content", updatedAt: new Date() });
   await ctx.answerCallbackQuery();
   return ctx.reply("Hãy gửi lại toàn bộ content WWK. Bạn sẽ chọn lại nguồn ảnh sau đó.");
@@ -286,11 +395,20 @@ bot.callbackQuery("export:edit", async (ctx) => {
 
 bot.callbackQuery("export:confirm", async (ctx) => {
   const order = await getOrder(ctx.chat!.id);
-  if (!order || order.template === "jewelry-1" || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  if (!order || order.template?.startsWith("jewelry-") || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
   await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
   await ctx.answerCallbackQuery();
   await ctx.reply("Đang tạo preview và ZIP…");
-  return exportWwk(ctx, order);
+  return exportWwk(ctx, order, true);
+});
+
+bot.callbackQuery("export:htmlonly", async (ctx) => {
+  const order = await getOrder(ctx.chat!.id);
+  if (!order || order.template?.startsWith("jewelry-") || order.status !== "waiting_confirmation") return ctx.answerCallbackQuery({ text: "Order này không còn chờ xác nhận." });
+  await saveOrder({ ...order, status: "processing", updatedAt: new Date() });
+  await ctx.answerCallbackQuery();
+  await ctx.reply("Đang tạo ZIP chỉ chứa HTML (không kèm ảnh)…");
+  return exportWwk(ctx, order, false);
 });
 
 bot.callbackQuery("gmail:reply", async (ctx) => {
@@ -439,15 +557,15 @@ app.post("/telegram/webhook", async (request, reply) => {
 async function checkWwkOrders(chatId: number): Promise<string> {
   try {
     const processed = await checkGmailOrders(async ({ messageId, threadId, text, subject, from, rfcMessageId }) => {
-    if (await wasEmailProcessed(messageId)) return false;
-    const folderName = folderNameFromEmailSubject(subject);
-    if (!folderName) {
-      await bot.api.sendMessage(chatId, `Mail WWK có subject không chứa ngày hợp lệ (d/m/yyyy hoặc d-m-yyyy): ${subject}`);
-      return false;
-    }
-    const accepted = await preparePayloadOrder(chatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });
-    if (accepted) await markEmailProcessed(messageId);
-    return accepted;
+      if (await wasEmailProcessed(messageId)) return false;
+      const folderName = folderNameFromEmailSubject(subject);
+      if (!folderName) {
+        await bot.api.sendMessage(chatId, `Mail WWK có subject không chứa ngày hợp lệ (d/m/yyyy hoặc d-m-yyyy): ${subject}`);
+        return false;
+      }
+      const accepted = await preparePayloadOrder(chatId, text, folderName, { messageId, threadId, from, subject, rfcMessageId });
+      if (accepted) await markEmailProcessed(messageId);
+      return accepted;
     });
     return processed ? `Đã tạo ${processed} order WWK từ Gmail.` : "Không có mail WWK mới cần xử lý.";
   } catch (error) {

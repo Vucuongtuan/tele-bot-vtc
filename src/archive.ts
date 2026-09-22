@@ -34,6 +34,7 @@ async function getImageCandidates(inputPath: string): Promise<Array<{ file: Arch
 export interface ExportOptions {
   indexPath?: string;
   imageName?: (order: number) => string;
+  includeImages?: boolean;
 }
 
 export async function buildExportZip(inputPath: string, outputPath: string, folderName: string, html: string, options: ExportOptions = {}): Promise<number> {
@@ -50,8 +51,10 @@ async function writeExportZip(outputPath: string, html: string, images: Array<{ 
   const output = createWriteStream(outputPath);
   archive.pipe(output);
   archive.append(html, { name: options.indexPath ?? "vi/index.html" });
-  for (const { source, order } of images) {
-    archive.append(source, { name: `assets/img/${options.imageName?.(order) ?? `banner${order}_2x.jpg`}` });
+  if (options.includeImages !== false) {
+    for (const { source, order } of images) {
+      archive.append(source, { name: `assets/img/${options.imageName?.(order) ?? `banner${order}_2x.jpg`}` });
+    }
   }
   await archive.finalize();
   await finished(output);
